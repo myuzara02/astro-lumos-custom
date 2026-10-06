@@ -27,17 +27,20 @@ node .agents/skills/lumos-import-figma/convert.mjs --folder figma
 (`npm run slice -- --folder figma` is the same.) The folder is the default when
 `--folder` has no value. Every file is recognised by what is inside it, not by
 its name: a JSON with `modes` and `variables` is a variable export, XML that
-starts with a `section`, `frame`, `canvas` or `instance` tag is metadata, and a
-JSON whose keys are all inventory keys is an inventory. Anything else, and any
-invalid JSON, is listed under `SKIPPED (not recognised)` rather than failing the
-run. An empty or missing folder exits non-zero.
+starts with a `section`, `frame`, `canvas` or `instance` tag is metadata, a file
+with `data-node-id=` and `className=` (or the "These styles are contained in the
+design" line) is a `get_design_context` capture, and a JSON whose keys are all
+inventory keys is an inventory. Anything else, and any invalid JSON, is listed
+under `SKIPPED (not recognised)` rather than failing the run. An empty or
+missing folder exits non-zero.
 
 The agent shows the consolidated report, puts the single `ASK BEFORE WRITING`
 list to the user, and edits `base.css` only after the answers.
 
 If the user gives a Figma node link instead of files, first save its
-`get_metadata` XML into the folder through the Figma MCP, then run the same
-command. The steps below explain what each part of the report means.
+`get_metadata` XML and its `get_design_context` output for each frame into the
+folder through the Figma MCP, then run the same command. The steps below
+explain what each part of the report means.
 
 ## What Figma cannot say
 
@@ -153,6 +156,23 @@ its own.
 The Figma MCP guidance skill `figma-design-to-code` is not available in omp and
 is not needed here: slicing only uses the data the tools return.
 
+## Template and project
+
+The template ships these role tokens, and a design only fills their values:
+
+- Colours: `--heading` (heading colour), `--text` (body colour), `--ui`
+  (strokes, selection, focus and hover fills).
+- Buttons: `--button-radius`, `-padding-block`, `-padding-inline`, `-gap`,
+  `-font-size`, `-font-weight`, `-line-height`, `-letter-spacing`,
+  `-border-inset`, plus the `--button-*` theme colours.
+- Utilities: `.weight-regular`, `.weight-medium`, `.weight-semibold`,
+  `.weight-bold`.
+
+The rule: **design-specific values go in the project, generic structure goes in
+the template.** Never edit the template's neutral defaults to suit one design;
+change the role token's value in the project instead. A difference between a
+Figma style and a template default is reported and asked about, never applied.
+
 ## Steps
 
 1. **Read the file.** Prefer a variable export when there is one: the
@@ -182,6 +202,40 @@ is not needed here: slicing only uses the data the tools return.
    used as measurements. **Do not apply or skip these three attributes
    silently:** report each difference, ask, then edit. A style used with two
    weights is a conflict to ask about, not to guess.
+
+   The same captures carry five more things, and the script reads each of them:
+
+   - **Text colours.** Heading styles (`Heading/H*`) set `--heading`, every other
+     text style sets `--text`. The most used colour of each role is compared
+     with the light theme block, followed through `--heading` → `--text` →
+     `--color-*`; the ready line says it must be set in every theme block. Every
+     other text colour (muted label, caption, accent eyebrow) is listed with its
+     node count and closest token, and the question is whether it is a role that
+     deserves a token or a one-off.
+   - **Effects.** `shadow-[…]` and `drop-shadow-[…]` classes become the distinct
+     shadows with how many nodes use each, matched to the Figma effect styles in
+     the styles line (a `drop-shadow` writes half the blur of a box shadow and
+     cannot express spread, so the style's own numbers are used when it matches).
+     They print as `--shadow-small|medium|large`, smallest blur first. Figma
+     effect styles are not in a variable export.
+   - **Buttons.** Any node whose `data-name` contains "button" is a row per
+     variant: fill, text colour, border, radius, padding, gap and text style.
+     Each text variant is compared with the `--button-*` role tokens and the
+     `--button-*` theme colours in the light theme, with a ready line per
+     difference. The primary variant is the user's choice; nothing is applied.
+   - **Assets.** Every `http://localhost:3845/assets/<hash>.<ext>` becomes a row
+     with the node that uses it and a ready `curl -o src/assets/<page>/<name>.<ext>`
+     line. The script makes no network request. Downscale photos, and rebuild
+     SVG icons with `fill="currentColor"`.
+   - **Fixed or clipped nodes.** `overflow-hidden`, `text-ellipsis`,
+     `line-clamp-*` and an explicit `h-[Npx]` on a frame that holds text are
+     flagged. They explain mismatches that are not bugs; ask whether they are
+     intentional.
+
+   `--summary <file...>` prints a capture as an indented outline, one line per
+   node (name, box, gap, padding variables, text style, colours, radius, no
+   code), so a page can be read in about two hundred lines instead of five
+   hundred.
 
    Leading trim is off by default in this project (opt-in with a `.text-trim`
    class; the `--*-trim-top/bottom` tokens still exist). A Figma text box
@@ -397,22 +451,45 @@ is not needed here: slicing only uses the data the tools return.
    existing covered it. That list is the one most worth arguing with: it is
    where the system grows, and growth is harder to undo than a token.
 
-8. **Look at it.** Tokens matching the table does not mean the page matches the
-   design. Start the dev server, open the page, and compare it against the
+   Three things go wrong while building, and all three are quiet:
+
+   - **Strokes sit inside the box in Figma, and Lumos is border-box.** Do not
+     add the border to the size. Use `--button-border-inset`, or subtract the
+     border from the padding, so the box ends up the size the frame says.
+   - **Do not name a component variant like an existing class.** A Button
+     variant called `icon` collided with the Icon component's `.icon`. Grep for
+     `.<variant>` before choosing the name.
+   - **After a bulk edit with `sed` or a script, Vite may serve stale component
+     CSS.** `touch` the file, then reload.
+
+8. **Look at it, then measure it.** Tokens matching the table does not mean the
+   page matches the design. Build in this order: tokens first (this skill),
+   then the page, then measure the DOM against the metadata at 1440, 834 and
+   393px. Start the dev server, open the page, and compare it with the
    screenshot from step 1:
 
    ```bash
    astro dev --background
    ```
 
-   Screenshot the built page at the same width as each frame you measured, and
-   check the two side by side. Then check the breakpoints you did *not*
-   measure — a design given only at desktop still has to survive 390px and
-   800px, and that is where derived values show up as wrong. Test the
-   boundaries too, because the switch is instant: 767px must show mobile values
-   and 768px tablet, 991px tablet and 992px desktop. Report what does not match
-   rather than quietly adjusting tokens until it does: a mismatch is often the
-   design being inconsistent, which is a question, not a bug.
+   Measure each section's container x, section height and gaps in the browser
+   and put them next to the `--metadata` numbers. **Report every delta with a
+   class**: design inconsistency (the Figma frames disagree with each other),
+   missing token (a value the system has no name for), component limitation
+   (the Lumos component cannot express it), or bug (it should match and does
+   not). Then check the breakpoints you did *not* measure — a design given only
+   at desktop still has to survive 390px and 800px, and that is where derived
+   values show up as wrong. Test the boundaries too, because the switch is
+   instant: 767px must show mobile values and 768px tablet, 991px tablet and
+   992px desktop. Report what does not match rather than quietly adjusting
+   tokens until it does: a mismatch is often the design being inconsistent,
+   which is a question, not a bug.
+
+   Figma nodes with a fixed height, or with clipped or ellipsised text, give
+   false mismatches: the drawing holds one length of copy and the page holds
+   another. The `FIXED HEIGHT / CLIPPED IN FIGMA` list says which nodes those
+   are; metadata cannot, because it shows a fixed-height frame and a
+   content-sized one the same way.
 
 ## The report
 
@@ -433,6 +510,15 @@ Close with these lists. Anything empty, say so.
   newly added, with the em value and the Figma value it came from.
 - **Fonts** — whether the Figma family and every weight it uses are configured
   under `fonts:` in `astro.config.mjs`, and what is missing.
+- **Colours** — `--heading` and `--text` against the Figma colours, and every
+  other text colour with its node count and the answer (role or one-off).
+- **Shadows** — the distinct shadows, which Figma effect style each equals, and
+  the tokens added.
+- **Buttons** — each variant as a row, which one is the primary, and every
+  `--button-*` token that differs.
+- **Assets** — what was downloaded and where, what was downscaled or rebuilt.
+- **Fixed or clipped nodes** — each one the user ruled on, and each mismatch it
+  explains.
 - **Still open** — inconsistencies the user has not ruled on yet.
 
 ## Checklist before editing base.css
@@ -440,8 +526,12 @@ Close with these lists. Anything empty, say so.
 - [ ] Variables compared: every row `match`, `DIFFERS` or `MISSING`, nothing left in an unknown group.
 - [ ] Layout measured: site-margin, gutter and section padding from metadata, outliers looked at.
 - [ ] Text styles compared: weight, letter spacing and line height for every style from `get_design_context`, conflicts asked.
+- [ ] Colours compared: `--heading` and `--text` against the light theme block, the other text colours asked about (roles or one-offs), new swatches listed, themed colours set in every theme block.
+- [ ] Shadows listed: the distinct shadows, compared with the Figma effect styles, and the `--shadow-*` question asked.
+- [ ] Buttons compared: every variant a row, the primary one chosen by the user, each `--button-*` DIFFERS line seen.
+- [ ] Assets listed: every curl line run (or deliberately skipped), photos downscaled, icons rebuilt with `currentColor`.
+- [ ] Fixed-height and clipped nodes asked about: intentional, or should the page let them grow.
 - [ ] Fonts checked: the family and every weight are configured.
-- [ ] Colors compared: swatches matched, new and themed ones listed.
 - [ ] The consolidated `ASK BEFORE WRITING` list was put to the user and answered.
 
 ## Versions
@@ -455,7 +545,7 @@ Lumos release, and a Lumos release does not invalidate the skill.
   duplicates it; the script reads it and prints both on every run:
 
   ```
-  lumos-import-figma 2.0.0  ·  Lumos <whatever package.json says>
+  lumos-import-figma 2.1.0  ·  Lumos <whatever package.json says>
   ```
 
   If the running project is a different version than `TESTED_AGAINST`, the

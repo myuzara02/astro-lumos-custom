@@ -98,6 +98,7 @@ npm run slice -- --folder figma                  # read everything in figma/
 npm run slice -- --metadata page.xml             # layout of one page
 npm run slice -- --design-context frame.txt      # text styles of one frame
 npm run slice -- --variables a.json b.json       # variable files only
+npm run slice -- --summary frame.txt             # compact outline of a design context
 npm run slice -- --px 30                         # nearest spacing token
 npm run slice -- --lh 36/32                      # line height 36 on a 32px font
 npm run slice -- --color "#FFFFFF@60"            # color with opacity
@@ -118,6 +119,20 @@ Every responsive value in `src/styles/base.css` has three numbers:
 Changing the design means changing numbers, never the formula. Spacing, radius and icon tokens use Figma's names (`--space-1-5rem`, `--radius-0-5rem`, `--icon-m`). Colors have two layers: palette values (`--color-neutral-10`) and theme roles (`--background`, `--text`, `--brand`). Leading text trim is off; turn it on with the `.text-trim` class.
 
 Build pages from components (`Section`, `ContentWrapper`, `Heading`, `Paragraph`); see `LUMOS.md`.
+
+## Customising without side effects: role tokens
+
+Each project can change these independently and everything stays aligned. Defaults are neutral, so the template looks unchanged until you set them.
+
+| Token | What it controls |
+| --- | --- |
+| `--text` | body copy colour |
+| `--heading` | heading colour (h1–h6, display); defaults to `--text` |
+| `--ui` | strokes, selection, focus outline and hover fills; defaults to `--text`, so changing body colour does not tint borders or focus rings |
+| `--button-radius`, `--button-padding-block`, `--button-padding-inline`, `--button-gap`, `--button-font-size`, `--button-font-weight`, `--button-line-height`, `--button-letter-spacing`, `--button-border-inset` | the shape and type of every button |
+| `--button-background`, `--button-text`, `--button-border` (and the `-2` secondary set) | button colours, defined in every theme block |
+
+Utility classes `.weight-regular`, `.weight-medium` and `.weight-semibold` cover body weight variants. The skill reports differences for all of these (text colours, shadows, buttons, fixed or clipped nodes, assets) and asks before anything is applied.
 
 ## Fonts
 
