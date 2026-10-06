@@ -201,6 +201,7 @@
   --viewport-max: 1440;
   --max-width-small: 70rem;
   --max-width-main: calc(var(--viewport-max) / 16 * 1rem);
+  --max-width-content: calc(var(--max-width-main) - var(--site-margin) * 2);
   --max-width-full: 100%;
 
   /* Icon size */

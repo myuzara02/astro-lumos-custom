@@ -101,6 +101,9 @@ the report has to say which is which.
 
 ## Layout slicing
 
+The widest Figma frame is the page width (`--max-width-main`), and its content column is that width minus the side margins (`--max-width-content` = `--max-width-main` − 2 × `--site-margin`; 1440 − 2 × 112 = 1216 in a design with 112px margins). Never cap content at the frame width itself, or it ends up wider than the design on screens larger than the frame.
+
+
 Site margin, gutter, section padding and display size are properties of the
 page, not of a component, and they can be read from geometry alone — without
 trusting node names.
