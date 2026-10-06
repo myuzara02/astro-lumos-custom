@@ -326,7 +326,7 @@ const panels = await slotContent(Astro.slots);
         color var(--hover-duration) var(--hover-ease),
         border-color var(--hover-duration) var(--hover-ease);
       &.is-active {
-        border-bottom-color: var(--text);
+        border-bottom-color: var(--ui);
         color: var(--text);
       }
       @media (hover: hover) {
@@ -342,7 +342,7 @@ const panels = await slotContent(Astro.slots);
         border-radius: var(--radius-full);
         text-align: start;
         &.is-active {
-          background-color: var(--text);
+          background-color: var(--ui);
           color: var(--background);
         }
       }
@@ -357,7 +357,7 @@ const panels = await slotContent(Astro.slots);
           inset-inline: 0;
           bottom: calc(var(--border-width) * -1);
           height: var(--border-width);
-          background-color: var(--text);
+          background-color: var(--ui);
           transform-origin: left;
           scale: 0 1;
         }

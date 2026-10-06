@@ -871,6 +871,11 @@
   font-weight: var(--primary-medium);
 }
 
+.weight-semibold {
+  font-family: var(--primary-family);
+  font-weight: var(--primary-semibold);
+}
+
 .weight-bold {
   font-family: var(--primary-family);
   font-weight: var(--primary-bold);

@@ -168,7 +168,7 @@ const fieldId = id ?? `range-${label ? slug(label) : "field"}`;
         background: var(--_handle-face);
       }
       &:focus-visible ~ .form-range_handle {
-        outline: var(--focus-width) solid var(--text);
+        outline: var(--focus-width) solid var(--ui);
         outline-offset: var(--focus-offset);
       }
     }
@@ -191,7 +191,7 @@ const fieldId = id ?? `range-${label ? slug(label) : "field"}`;
       width: calc(
         var(--_progress, 0) * (100% - var(--_handle)) + var(--_handle) / 2
       );
-      background-color: var(--text);
+      background-color: var(--ui);
     }
 
     .form-range_handle {
@@ -202,7 +202,7 @@ const fieldId = id ?? `range-${label ? slug(label) : "field"}`;
       translate: -50% 0;
       width: var(--_handle);
       height: var(--_handle);
-      border: calc(var(--border-width) * 2) solid var(--text);
+      border: calc(var(--border-width) * 2) solid var(--ui);
       border-radius: var(--radius-full);
       background-color: var(--background);
       pointer-events: none;

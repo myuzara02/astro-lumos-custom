@@ -383,17 +383,17 @@ const slides = await slotContent(Astro.slots);
       width: 0.75rem;
       height: 0.75rem;
       padding: 0;
-      border: var(--border-width) solid var(--text);
+      border: var(--border-width) solid var(--ui);
       border-radius: var(--radius-full);
       background: none;
       transition: background-color var(--hover-duration) var(--hover-ease);
 
       &.is-active {
-        background-color: var(--text);
+        background-color: var(--ui);
       }
       @media (hover: hover) {
         &:hover {
-          background-color: var(--text);
+          background-color: var(--ui);
         }
       }
     }

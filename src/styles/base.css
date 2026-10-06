@@ -97,6 +97,17 @@
   --line-height-large: 1.3;
   --line-height-huge: 1.5;
 
+  /* Button */
+  --button-radius: 0.5em;
+  --button-padding-block: 0.75em;
+  --button-padding-inline: 1.5em;
+  --button-border-inset: 0rem;
+  --button-gap: 0.5em;
+  --button-font-size: initial;
+  --button-font-weight: initial;
+  --button-line-height: 1.2;
+  --button-letter-spacing: initial;
+
   /* Borders & focus */
   --border-width: 0.0625rem;
   --focus-width: 0.125rem;
@@ -594,24 +605,26 @@
   --background-3: var(--color-neutral-10);
   --background-skeleton: color-mix(in lab, currentcolor 10%, transparent);
   --text: var(--color-neutral-90);
+  --heading: var(--text);
+  --ui: var(--text);
   --text-2: color-mix(in lab, currentcolor 60%, transparent);
-  --border: color-mix(in lab, var(--text) 20%, transparent);
+  --border: color-mix(in lab, var(--ui) 20%, transparent);
   --heading-accent: color-mix(in srgb, var(--brand), black 20%);
 
-  --selection-background: var(--text);
+  --selection-background: var(--ui);
   --selection-text: var(--background);
 
   --button-background: var(--brand);
   --button-border: var(--button-background);
   --button-text: var(--brand-text);
-  --button-background-hover: var(--text);
+  --button-background-hover: var(--ui);
   --button-border-hover: var(--button-background-hover);
   --button-text-hover: var(--background);
 
   --button-2-background: transparent;
   --button-2-border: var(--border);
   --button-2-text: var(--text);
-  --button-2-background-hover: var(--text);
+  --button-2-background-hover: var(--ui);
   --button-2-border-hover: var(--button-2-background-hover);
   --button-2-text-hover: var(--background);
 
@@ -630,31 +643,33 @@
   --background-3: var(--color-neutral-70);
   --background-skeleton: color-mix(in lab, currentcolor 10%, transparent);
   --text: var(--color-neutral-0);
+  --heading: var(--text);
+  --ui: var(--text);
   --text-2: color-mix(in lab, currentcolor 60%, transparent);
-  --border: color-mix(in lab, var(--text) 20%, transparent);
+  --border: color-mix(in lab, var(--ui) 20%, transparent);
   --heading-accent: var(--brand);
 
-  --selection-background: var(--text);
+  --selection-background: var(--ui);
   --selection-text: var(--background);
 
   --button-background: var(--brand);
   --button-border: var(--button-background);
   --button-text: var(--brand-text);
-  --button-background-hover: var(--text);
+  --button-background-hover: var(--ui);
   --button-border-hover: var(--button-background-hover);
   --button-text-hover: var(--background);
 
   --button-2-background: transparent;
   --button-2-border: var(--border);
   --button-2-text: var(--text);
-  --button-2-background-hover: var(--text);
+  --button-2-background-hover: var(--ui);
   --button-2-border-hover: var(--button-2-background-hover);
   --button-2-text-hover: var(--background);
 
   --link-text: var(--text);
   --link-border: var(--border);
   --link-text-hover: var(--text);
-  --link-border-hover: var(--text);
+  --link-border-hover: var(--ui);
 }
 
 .theme-brand {
@@ -665,11 +680,13 @@
   --background-3: color-mix(in lab, var(--background) 80%, var(--text));
   --background-skeleton: color-mix(in lab, currentcolor 10%, transparent);
   --text: var(--brand-text);
+  --heading: var(--text);
+  --ui: var(--text);
   --text-2: color-mix(in lab, currentcolor 60%, transparent);
-  --border: color-mix(in lab, var(--text) 20%, transparent);
+  --border: color-mix(in lab, var(--ui) 20%, transparent);
   --heading-accent: color-mix(in srgb, var(--text), white 20%);
 
-  --selection-background: var(--text);
+  --selection-background: var(--ui);
   --selection-text: var(--background);
 
   --button-background: var(--brand-text);
@@ -689,7 +706,7 @@
   --link-text: var(--text);
   --link-border: var(--border);
   --link-text-hover: var(--text);
-  --link-border-hover: var(--text);
+  --link-border-hover: var(--ui);
 }
 
 :root,
@@ -804,7 +821,7 @@ select:has(option[value=""]:checked) {
 }
 
 :focus-visible {
-  outline-color: var(--text);
+  outline-color: var(--ui);
   outline-offset: var(--focus-offset);
   outline-width: var(--focus-width);
   outline-style: solid;
@@ -914,6 +931,7 @@ body,
 
 .text-style-display {
   font-family: var(--display-font-family);
+  color: var(--heading);
   font-size: var(--display);
   font-weight: var(--display-font-weight);
   line-height: var(--display-line-height);
@@ -929,6 +947,7 @@ body,
 h1,
 .text-style-h1 {
   font-family: var(--h1-font-family);
+  color: var(--heading);
   font-size: var(--h1);
   font-weight: var(--h1-font-weight);
   line-height: var(--h1-line-height);
@@ -944,6 +963,7 @@ h1,
 h2,
 .text-style-h2 {
   font-family: var(--h2-font-family);
+  color: var(--heading);
   font-size: var(--h2);
   font-weight: var(--h2-font-weight);
   line-height: var(--h2-line-height);
@@ -959,6 +979,7 @@ h2,
 h3,
 .text-style-h3 {
   font-family: var(--h3-font-family);
+  color: var(--heading);
   font-size: var(--h3);
   font-weight: var(--h3-font-weight);
   line-height: var(--h3-line-height);
@@ -974,6 +995,7 @@ h3,
 h4,
 .text-style-h4 {
   font-family: var(--h4-font-family);
+  color: var(--heading);
   font-size: var(--h4);
   font-weight: var(--h4-font-weight);
   line-height: var(--h4-line-height);
@@ -989,6 +1011,7 @@ h4,
 h5,
 .text-style-h5 {
   font-family: var(--h5-font-family);
+  color: var(--heading);
   font-size: var(--h5);
   font-weight: var(--h5-font-weight);
   line-height: var(--h5-line-height);
@@ -1004,6 +1027,7 @@ h5,
 h6,
 .text-style-h6 {
   font-family: var(--h6-font-family);
+  color: var(--heading);
   font-size: var(--h6);
   font-weight: var(--h6-font-weight);
   line-height: var(--h6-line-height);
