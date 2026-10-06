@@ -156,8 +156,9 @@ Bold 700 against the project's Medium, letter spacing -2.5% against
 defaults. The skill reports each difference and asks; it never applies one on
 its own.
 
-The Figma MCP guidance skill `figma-design-to-code` is not available in omp and
-is not needed here: slicing only uses the data the tools return.
+Figma's own code-generation guidance (for example a `figma-design-to-code` skill
+that `get_design_context` may ask you to load) is not needed here: slicing only
+uses the data the tools return. If an agent does not have that skill, continue.
 
 ## Template and project
 

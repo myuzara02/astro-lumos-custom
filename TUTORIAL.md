@@ -22,19 +22,17 @@ npm install
 
 ### 2. Connect Figma to your AI agent
 
-1. Open the Figma desktop app and your design file, then switch to **Dev Mode**.
-2. Turn on the **MCP server** in the right-hand panel.
-3. Add this to `~/.omp/agent/mcp.json` (all projects) or `.omp/mcp.json` (this project):
-   ```json
-   {
-     "mcpServers": {
-       "figma-desktop": { "type": "http", "url": "http://127.0.0.1:3845/mcp" }
-     }
-   }
-   ```
-4. In the agent, run `/mcp reload`, then `/mcp test figma-desktop`. If the tools do not appear, start a new session.
+Any AI coding agent that supports MCP servers works (the skill is plain Markdown plus a Node script; `AGENTS.md` is the shared instruction file most agents read).
 
-Keep Figma desktop open while you work. Figma's remote server (`mcp.figma.com`) uses a login that omp could not complete, so use the desktop server.
+1. Open the Figma desktop app and your design file, then switch to **Dev Mode**.
+2. Turn on the **MCP server** in the right-hand panel. Figma shows its address, normally `http://127.0.0.1:3845/mcp`.
+3. Register that address as an **HTTP MCP server** in your agent's MCP settings, named for example `figma-desktop`. The setting lives in a different place in each agent (a config file or a CLI command such as `mcp add`); check your agent's MCP documentation. The generic shape is:
+   ```json
+   { "mcpServers": { "figma-desktop": { "type": "http", "url": "http://127.0.0.1:3845/mcp" } } }
+   ```
+4. Reload or restart the agent, then confirm it lists Figma tools such as `get_metadata` and `get_design_context`.
+
+Keep Figma desktop open while you work. Figma's remote server (`mcp.figma.com`) needs an OAuth login that some agents cannot complete, so the desktop server is the dependable choice.
 
 ## Part 2: For every new design
 
@@ -146,8 +144,8 @@ A project made from the template is a copy, so later template changes do not arr
 
 | Problem | Fix |
 | --- | --- |
-| Figma tools do not appear in the agent | Run `/mcp reload` or start a new session. Check that Figma desktop is open with the MCP server on. |
-| `/mcp reauth` says "OAuth authorization failed" | You are using Figma's remote server. Switch to the desktop server (Part 1, step 2). |
+| Figma tools do not appear in the agent | Reload or restart the agent. Check that Figma desktop is open with its MCP server on and that the address in the agent matches the one Figma shows. |
+| The agent reports "OAuth authorization failed" for Figma | You are using Figma's remote server. Switch to the desktop server (Part 1, step 2). |
 | Headings look Regular instead of Bold | The weight is not loaded. Check `weights` in `astro.config.mjs`. |
 | Section padding differs between tablet and the variable | The designer used different variables per frame. The agent measures positions, which are the source of truth. |
 | Some sections report "not measurable" | They are component instances or have no children in the layout data. The agent reads them from the design context instead. |
