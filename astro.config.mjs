@@ -15,15 +15,13 @@ export default defineConfig({
     {
       name: "Inter",
       cssVariable: "--font-inter",
-      provider: fontProviders.local(),
+      provider: fontProviders.google(),
+      weights: ["400 700"],
+      styles: ["normal"],
       options: {
-        variants: [
-          {
-            weight: 400,
-            style: "normal",
-            src: ["./src/assets/fonts/inter-regular.woff2"],
-          },
-        ],
+        experimental: {
+          variableAxis: { opsz: ["32"] },
+        },
       },
     },
   ],

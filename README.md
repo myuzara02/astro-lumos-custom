@@ -13,6 +13,8 @@ efficiency, scalability and accessibility.
 
 Documentation lives at **[lumosframework.com](https://lumosframework.com)**.
 
+> **This is a customised template (`astro-lumos-custom`).** Tokens in `src/styles/base.css` are explicit per-breakpoint values (mobile < 768px, tablet 768–991px, desktop ≥ 992px) sliced from a Figma file, not fluid `clamp()`. The palette and layout values belong to that original design; replace them with the `lumos-import-figma` skill for a new project.
+
 > **Beta.** Every `0.x` release is allowed to break things, and the component
 > props and their placements are the parts still moving — the tokens, layers and
 > CSS are not. `v1.0.0` is where the API gets committed to; breaking it after

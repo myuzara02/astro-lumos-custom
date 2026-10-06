@@ -27,6 +27,7 @@
  *   node convert.mjs --px 30 [--bp tablet|mobile]
  *   node convert.mjs --lh 36/32 [--bp tablet|mobile]
  *   node convert.mjs --color "#FFFFFF@60"
+ *   node convert.mjs --metadata fixtures/sample-page.xml [--wrapper nodeId,...]
  */
 
 import { readFileSync } from "node:fs";
@@ -112,7 +113,7 @@ function readTokens(css) {
   return { scale, lineHeights, letterSpacing, styleLetter, weights, swatches, textSwatches };
 }
 
-/** The families under `fonts:` in astro.config.mjs, with the weight ranges their variants declare. */
+/** The families under `fonts:` in astro.config.mjs: provider, weights covered, and any pinned variable axes. */
 function readFonts(text) {
   const start = text.search(/\bfonts:\s*\[/);
   if (start === -1) return null;
@@ -125,22 +126,42 @@ function readFonts(text) {
       break;
     }
   }
+  /* "400", 400, "bold" or "400 700" (a range): the top-level `weights` array, or a local variant's `weight`. */
+  const weightRange = (item) => {
+    const text = item.replace(/["']/g, "").trim();
+    if (/^\d+\s+\d+$/.test(text)) return text.split(/\s+/).map(Number);
+    const n = /^\d+$/.test(text) ? Number(text) : WEIGHT_NAMES[text.toLowerCase().replace(/[^a-z]/g, "")];
+    return n ? [n, n] : null;
+  };
   return text
     .slice(start, end)
     .split(/(?=\bname:\s*["'])/)
     .slice(1)
     .map((seg) => {
-      const ranges = [...seg.matchAll(/\bweights?:\s*(\[[^\]]*\]|"[^"]*"|'[^']*'|\d+)/g)].flatMap((m) => {
-        const nums = m[1].match(/\d+/g).map(Number);
-        return /^["']/.test(m[1]) && nums.length === 2 ? [nums] : nums.map((n) => [n, n]);
-      });
+      const ranges = [...seg.matchAll(/\bweights?:\s*(\[[^\]]*\]|"[^"]*"|'[^']*'|\w+)/g)]
+        .flatMap((m) => m[1].startsWith("[") ? m[1].match(/"[^"]*"|'[^']*'|\w+/g) : [m[1]])
+        .map(weightRange)
+        .filter(Boolean);
+      const opsz = seg.match(/\bopsz:\s*\[([^\]]*)\]/)?.[1].match(/[\d.]+/g) ?? [];
       return {
         name: seg.match(/name:\s*["']([^"']+)["']/)[1],
         cssVariable: seg.match(/cssVariable:\s*["']([^"']+)["']/)?.[1],
         provider: seg.match(/fontProviders\.(\w+)/)?.[1] ?? "unknown",
         ranges,
+        opsz,
       };
     });
+}
+
+/** The configured font a Figma family resolves to. "Inter Display" is Inter pinned at optical size 32. */
+function fontFor(fonts, family) {
+  const key = family.toLowerCase();
+  const exact = fonts.find((f) => f.name.toLowerCase() === key);
+  if (exact) return { font: exact, note: null };
+  if (key !== "inter display") return { font: null, note: null };
+  const inter = fonts.find((f) => f.name.toLowerCase() === "inter");
+  if (inter?.opsz.length === 1 && inter.opsz[0] === "32") return { font: inter, note: "Inter Display = Inter pinned at opsz 32" };
+  return { font: null, note: 'Inter Display is Inter at optical size 32: pin it with options.experimental.variableAxis: { opsz: ["32"] } on the Inter entry, or add the font file' };
 }
 
 /* ---------- conversions ---------- */
@@ -375,6 +396,19 @@ const printVersion = () => {
   console.log("");
 };
 
+/** The tokens that describe the page layout rather than a component. */
+const isLayoutToken = (t) => /^(site-margin|site-gutter|display|section-space-[a-z0-9-]+)$/.test(t);
+const layoutFamily = (token) => (n) =>
+  token.startsWith("section-space-") ? n.startsWith("section-space-") : token.startsWith("site-") ? n.startsWith("site-") : n === token;
+
+/** Whether the measured breakpoints already equal the token's own. */
+function compareLayout(token, have) {
+  const cur = tokens.scale[token];
+  if (!cur) return { status: "UNMAPPED", cur: null };
+  const equal = BPS.every((b) => have[b] === undefined || Math.abs(have[b] - cur[b]) < 0.01);
+  return { status: equal ? "MATCH" : "DIFFERS", cur };
+}
+
 /* ---------- Figma variable export ---------- */
 
 const variableFiles = flagAll("variables");
@@ -471,7 +505,7 @@ if (variableFiles.length) {
     const from = e.sources.join(" + ");
     if (e.kind === "family") {
       const family = String(e.values.desktop);
-      const hit = fonts?.find((f) => f.name.toLowerCase() === family.toLowerCase());
+      const { font: hit } = fonts ? fontFor(fonts, family) : {};
       const status = !fonts ? "not checked" : hit ? "configured" : "NOT CONFIGURED";
       table.push([from, "--primary-family", family, primaryFont ? `${primaryFont.name} (${primaryVar})` : primaryVar ?? "—", status]);
       if (hit) counts.match++;
@@ -547,16 +581,16 @@ if (variableFiles.length) {
       wanted.set(family, [...(wanted.get(family) ?? []), ...e.sources]);
     }
     for (const [family, sources] of wanted) {
-      const hit = fonts.find((f) => f.name.toLowerCase() === family.toLowerCase());
-      fontNotes.push(`${family} (${sources.join(", ")}): ${hit ? `configured as ${hit.name} (${hit.cssVariable}, ${hit.provider})` : `NOT CONFIGURED — ${astroPath} has: ${fonts.map((f) => f.name).join(", ") || "nothing"}`}`);
+      const { font: hit, note } = fontFor(fonts, family);
+      fontNotes.push(`${family} (${sources.join(", ")}): ${hit ? `configured as ${hit.name} (${hit.cssVariable}, ${hit.provider})${note ? ` — ${note}` : ""}` : `NOT CONFIGURED — ${astroPath} has: ${fonts.map((f) => f.name).join(", ") || "nothing"}${note ? `. ${note}` : ""}`}`);
     }
     fontNotes.push(`--primary-family uses ${primaryVar ?? "no font variable"}${primaryFont ? `, which is ${primaryFont.name}` : ", which matches no entry"}.`);
     for (const w of new Map(weightNeeds.map((x) => [x.num, x])).values()) {
       const has = rendered?.ranges.some(([lo, hi]) => w.num >= lo && w.num <= hi);
-      fontNotes.push(`weight ${w.raw} (${w.num}): ${has ? "variant configured" : "MISSING"} in ${rendered?.name ?? "—"}`);
+      fontNotes.push(`weight ${w.raw} (${w.num}): ${has ? "covered by weights/variants" : "MISSING"} in ${rendered?.name ?? "—"}`);
     }
     if (fontNotes.some((n) => /NOT CONFIGURED|MISSING/.test(n))) {
-      asks.push("Fonts are not fully configured. Add a variant (a local file under src/assets/fonts) for each missing weight, or switch the entry to fontProviders.google() where the family exists on Google Fonts? That is the user's call.");
+      asks.push("Fonts are not fully configured. Add the missing weights (a local variant under src/assets/fonts, or widen `weights` on a fontProviders.google() entry where the family exists on Google Fonts)? That is the user's call.");
     }
   }
 
@@ -595,6 +629,425 @@ if (variableFiles.length) {
   process.exit(0);
 }
 
+/* ---------- Figma metadata: layout slicing ---------- */
+
+const metadataFiles = flagAll("metadata");
+if (args.includes("--metadata") && !metadataFiles.length) fail("--metadata needs one or more XML files");
+
+if (metadataFiles.length) {
+  const wrapperIds = (flag("wrapper") ?? "").split(",").filter(Boolean);
+  const same = (a, b) => Math.abs(a - b) <= 1; // metadata positions are rounded
+  const round2 = (n) => +n.toFixed(2);
+  const bpOfWidth = (w) => (w >= 992 ? "desktop" : w >= 768 ? "tablet" : "mobile");
+  const bpHint = (name) => name.match(/\[(desktop|tablet|mobile)\]/i)?.[1].toLowerCase();
+  const cell = (v) => (v === undefined ? "—" : String(v));
+  const decode = (s) => s.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&(?:#39|apos);/g, "'").replace(/&amp;/g, "&");
+
+  /* The text layers here are named after their style; that is how a page's type styles are found. */
+  const TYPE_STYLES = {
+    h1: "h1", h2: "h2", h3: "h3", h4: "h4", h5: "h5", h6: "h6", display: "display",
+    p__lg: "text-large", p__md: "text-main", p__sm: "text-small", p__xs: "text-xsmall",
+    overline__md: "overline-main", overline__sm: "overline-small",
+  };
+
+  /** A tolerant reader for get_metadata's flat tag format. Positions are relative to the parent. */
+  function parseMetadata(xml, file) {
+    const root = { children: [] };
+    const stack = [root];
+    for (const m of xml.matchAll(/<(\/?)([\w-]+)((?:\s+[\w-]+="[^"]*")*)\s*(\/?)>/g)) {
+      if (m[1]) {
+        if (stack.length > 1) stack.pop();
+        continue;
+      }
+      const a = Object.fromEntries([...m[3].matchAll(/([\w-]+)="([^"]*)"/g)].map((x) => [x[1], decode(x[2])]));
+      const node = {
+        tag: m[2], id: a.id, name: a.name ?? "",
+        x: Number(a.x ?? 0), y: Number(a.y ?? 0), w: Number(a.width), h: Number(a.height),
+        children: [],
+      };
+      stack.at(-1).children.push(node);
+      if (!m[4]) stack.push(node);
+    }
+    if (!root.children.length) fail(`${file}: no nodes found — expected get_metadata XML`);
+    return root.children;
+  }
+
+  /** A node by id, with its offset from the section it is found under. */
+  function findNode(node, id, ox = 0, oy = 0) {
+    for (const c of node.children) {
+      if (c.id === id) return { node: c, ox: ox + c.x, oy: oy + c.y };
+      const hit = findNode(c, id, ox + c.x, oy + c.y);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  /** The content container: the first inset, symmetric frame under a chain of single full-width frames. */
+  function findContainer(section, start) {
+    let node = start?.node ?? section;
+    let ox = start?.ox ?? 0;
+    let oy = start?.oy ?? 0;
+    for (;;) {
+      const kids = node.children.filter((c) => c.tag === "frame");
+      const inset = kids.filter((c) => c.w < section.w - 1 && c.x + ox > 0);
+      const symmetric = inset.find((c) => same(c.x + ox, section.w - (c.x + ox) - c.w));
+      if (symmetric) return { node: symmetric, x: symmetric.x + ox, y: symmetric.y + oy };
+      const full = kids.filter((c) => same(c.w, section.w));
+      if (full.length > 1) return { error: "several full-width children, pass --wrapper <nodeId>" };
+      if (full.length === 1) {
+        node = full[0];
+        ox += node.x;
+        oy += node.y;
+        continue;
+      }
+      if (inset.length) {
+        const c = inset[0];
+        const right = round2(section.w - (c.x + ox) - c.w);
+        return { node: c, x: c.x + ox, y: c.y + oy, asymmetric: `left ${c.x + ox}, right ${right}` };
+      }
+      return { error: "no inset container found" };
+    }
+  }
+
+  const lines = (items, key) => {
+    const out = [];
+    for (const k of items) {
+      const l = out.find((l) => same(l[0][key], k[key]));
+      if (l) l.push(k);
+      else out.push([k]);
+    }
+    return out;
+  };
+
+  /** Gaps between equal-sized siblings that span at least half the container: columns first, stacks as the fallback. */
+  function collectGaps(node, span, out, where) {
+    const kids = node.children.filter((c) => c.tag !== "text");
+    const clusters = [];
+    for (const k of kids) {
+      const c = clusters.find((cl) => same(cl[0].w, k.w) && same(cl[0].h, k.h));
+      if (c) c.push(k);
+      else clusters.push([k]);
+    }
+    for (const cl of clusters.filter((c) => c.length > 1)) {
+      for (const row of lines(cl, "y")) {
+        row.sort((a, b) => a.x - b.x);
+        if (row.length < 2 || row.at(-1).x + row.at(-1).w - row[0].x < span / 2) continue;
+        row.slice(1).forEach((k, i) => {
+          const gap = round2(k.x - (row[i].x + row[i].w));
+          if (gap > 0) out.row.push({ value: gap, ...where });
+        });
+      }
+      for (const col of lines(cl, "x")) {
+        col.sort((a, b) => a.y - b.y);
+        if (col.length < 2 || col[0].w < span / 2) continue;
+        col.slice(1).forEach((k, i) => {
+          const gap = round2(k.y - (col[i].y + col[i].h));
+          if (gap > 0) out.stack.push({ value: gap, ...where });
+        });
+      }
+    }
+    for (const k of kids) collectGaps(k, span, out, where);
+  }
+
+  function collectTexts(node, out) {
+    for (const c of node.children) {
+      if (c.tag === "text" && TYPE_STYLES[c.name.toLowerCase()]) out.push({ style: c.name.toLowerCase(), w: c.w });
+      collectTexts(c, out);
+    }
+  }
+
+  /** Every direct child of a page frame, measured if it is a full-width frame with a findable container. */
+  function measurePage(page) {
+    const sections = [];
+    const gaps = { row: [], stack: [] };
+    for (const child of page.children) {
+      const info = { node: child };
+      if (child.tag !== "frame") info.reason = `${child.tag}`;
+      else if (!same(child.w, page.w)) info.reason = "not full width";
+      else if (!child.children.length) info.reason = "no children";
+      else {
+        const start = wrapperIds.map((id) => findNode(child, id)).find(Boolean);
+        const hit = findContainer(child, start);
+        if (hit.error) {
+          info.reason = hit.error;
+        } else {
+          const c = hit.node;
+          Object.assign(info, {
+            margin: round2(hit.x),
+            top: round2(hit.y),
+            bottom: round2(child.h - (hit.y + c.h)),
+            asymmetric: hit.asymmetric,
+            containerId: c.id,
+          });
+          collectGaps(c, c.w, gaps, { section: child.name, id: c.id });
+        }
+      }
+      sections.push(info);
+    }
+    const texts = [];
+    collectTexts(page, texts);
+    return { page, sections, gaps, texts };
+  }
+
+  const pageGroups = [];
+  const problems = [];
+  for (const file of metadataFiles) {
+    for (const root of parseMetadata(readFileSync(file, "utf8"), file)) {
+      const frames = root.tag === "section" ? root.children.filter((c) => c.tag === "frame") : [root];
+      const byWidth = {};
+      for (const f of frames) (byWidth[bpOfWidth(f.w)] ??= []).push(f);
+      let chosen = BPS.every((b) => byWidth[b]?.length === 1) && frames.length === 3
+        ? Object.fromEntries(BPS.map((b) => [b, byWidth[b][0]]))
+        : null;
+      let via = "width";
+      if (!chosen && frames.length === 3) {
+        const hinted = Object.fromEntries(frames.map((f) => [bpHint(f.name), f]));
+        if (BPS.every((b) => hinted[b])) {
+          chosen = Object.fromEntries(BPS.map((b) => [b, hinted[b]]));
+          via = "name, because the widths do not split three ways";
+        }
+      }
+      if (!chosen) {
+        problems.push(`${file}: "${root.name}" has ${frames.length} frame(s) (widths ${frames.map((f) => f.w).join(", ") || "none"}); expected one per breakpoint, so it was not measured.`);
+        continue;
+      }
+      const measured = Object.fromEntries(BPS.map((b) => [b, measurePage(chosen[b])]));
+      pageGroups.push({ file, name: root.name, measured, via });
+    }
+  }
+  if (!pageGroups.length) fail(problems.join("\n") || "nothing to measure");
+
+  const obs = { margin: {}, top: {}, bottom: {}, gutter: {} };
+  const stackedAt = new Set();
+  const texts = {};
+  const unmeasurable = new Map();
+  const groups = new Map();
+  const incomplete = [];
+  let pairedByName = false;
+  for (const g of pageGroups) {
+    for (const b of BPS) {
+      const m = g.measured[b];
+      const at = (o) => (o[b] ??= []);
+      for (const s of m.sections) {
+        if (s.margin === undefined) {
+          const key = `${g.name}|${s.node.name}|${s.reason}`;
+          unmeasurable.set(key, [...(unmeasurable.get(key) ?? []), b]);
+          continue;
+        }
+        const where = { file: g.file, page: g.name, section: s.node.name, id: s.containerId };
+        at(obs.margin).push({ value: s.margin, ...where, note: s.asymmetric });
+        at(obs.top).push({ value: s.top, ...where });
+        at(obs.bottom).push({ value: s.bottom, ...where });
+      }
+      const useStack = !m.gaps.row.length && m.gaps.stack.length;
+      if (useStack) stackedAt.add(b);
+      for (const o of useStack ? m.gaps.stack : m.gaps.row) at(obs.gutter).push({ ...o, page: g.name });
+      for (const t of m.texts) {
+        const e = ((texts[t.style] ??= {})[b] ??= { n: 0, widths: new Set() });
+        e.n++;
+        e.widths.add(t.w);
+      }
+    }
+
+    const lists = Object.fromEntries(BPS.map((b) => [b, g.measured[b].sections]));
+    const counts = BPS.map((b) => lists[b].length);
+    const byIndex = counts.every((c) => c === counts[0]);
+    if (!byIndex) pairedByName = true;
+    for (const [i, d] of lists.desktop.entries()) {
+      const trio = Object.fromEntries(BPS.map((b) => [b, byIndex ? lists[b][i] : lists[b].find((s) => s.node.name === d.node.name)]));
+      const done = BPS.filter((b) => trio[b]?.margin !== undefined);
+      if (!done.length) continue;
+      if (done.length < 3) {
+        incomplete.push(`${g.name}: ${d.node.name} measured only at ${done.join("/")}`);
+        continue;
+      }
+      const val = (s) => (s.top === s.bottom ? s.top : `${s.top}/${s.bottom}`);
+      const key = BPS.map((b) => val(trio[b])).join("|");
+      const entry = groups.get(key) ?? { values: Object.fromEntries(BPS.map((b) => [b, val(trio[b])])), sections: [] };
+      entry.sections.push(`${g.name.replace(/^.*?--\s*V\d+\s*--\s*/, "")}: ${d.node.name}`);
+      groups.set(key, entry);
+    }
+  }
+
+  /** Modal value of a measurement, the distinct values with counts, and every observation that disagrees. */
+  function modal(list = []) {
+    const counts = new Map();
+    for (const o of list) counts.set(o.value, (counts.get(o.value) ?? 0) + 1);
+    const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+    if (!sorted.length) return null;
+    return {
+      value: sorted[0][0],
+      count: sorted[0][1],
+      total: list.length,
+      distinct: sorted,
+      tie: sorted.length > 1 && sorted[1][1] === sorted[0][1],
+      outliers: list.filter((o) => o.value !== sorted[0][0]),
+    };
+  }
+  const measures = {
+    "site-margin": Object.fromEntries(BPS.map((b) => [b, modal(obs.margin[b])])),
+    "section padding top": Object.fromEntries(BPS.map((b) => [b, modal(obs.top[b])])),
+    "section padding bottom": Object.fromEntries(BPS.map((b) => [b, modal(obs.bottom[b])])),
+    "site-gutter": Object.fromEntries(BPS.map((b) => [b, modal(obs.gutter[b])])),
+  };
+
+  const confidence = (name, m) => {
+    const parts = BPS.map((b) => {
+      const x = m[b];
+      if (!x) return "none";
+      if (name === "site-gutter" && stackedAt.has(b)) return "low (from stacked layout)";
+      if (x.tie) return "low (tie)";
+      if (x.distinct.length > 1) return `medium (${x.outliers.length} outlier)`;
+      return x.total >= 3 ? "high" : "medium (few samples)";
+    });
+    return parts.every((p) => p === parts[0]) ? parts[0] : BPS.map((b, i) => `${b[0].toUpperCase()}: ${parts[i]}`).join("; ");
+  };
+
+  printVersion();
+  console.log("PAGES");
+  for (const g of pageGroups) {
+    const parts = BPS.map((b) => `${b} ${g.measured[b].page.w}px (${g.measured[b].sections.filter((s) => s.margin !== undefined).length} of ${g.measured[b].sections.length} measurable)`);
+    console.log(`  ${g.name}: ${parts.join(", ")}${g.via === "width" ? "" : ` — frames told apart by ${g.via}`}`);
+  }
+  for (const p of problems) console.log(`  ! ${p}`);
+  if (pairedByName) console.log("  note: the frames have different child counts, so sections were paired by name.");
+
+  console.log("\nMEASURED");
+  printTable(
+    ["MEASURE", "MOBILE", "TABLET", "DESKTOP", "COUNT M/T/D", "CONFIDENCE"],
+    Object.entries(measures).map(([name, m]) => [
+      name,
+      ...["mobile", "tablet", "desktop"].map((b) => cell(m[b]?.value)),
+      ["mobile", "tablet", "desktop"].map((b) => (m[b] ? `${m[b].count}/${m[b].total}` : "0")).join(" "),
+      confidence(name, m),
+    ]),
+  );
+
+  const spread = [];
+  for (const [name, m] of Object.entries(measures)) {
+    for (const b of ["mobile", "tablet", "desktop"]) {
+      const x = m[b];
+      if (!x || x.distinct.length === 1) continue;
+      spread.push(`${name} at ${b}: ${x.distinct.map(([v, c]) => `${v}×${c}`).join(", ")}`);
+      for (const o of x.outliers.slice(0, 5)) {
+        spread.push(`  outlier ${o.value} — ${o.page ?? ""}${o.section ? `, ${o.section}` : ""}${o.id ? ` (${o.id})` : ""}${o.note ? ` [asymmetric: ${o.note}]` : ""}`);
+      }
+    }
+  }
+  if (spread.length) {
+    console.log("\nDISTINCT VALUES (modal first):");
+    for (const l of spread) console.log(`  ${l}`);
+  }
+  const asym = Object.values(obs.margin).flat().filter((o) => o.note && !spread.some((l) => l.includes(`(${o.id})`)));
+  for (const o of asym) console.log(`  asymmetric container in ${o.page}, ${o.section} (${o.id}): ${o.note}`);
+
+  const groupList = [...groups.values()];
+  console.log("\nSECTION PADDING GROUPS (container y, and section height minus container bottom):");
+  if (!groupList.length) console.log("  none measured at all three breakpoints");
+  for (const [i, gr] of groupList.entries()) {
+    const v = gr.values;
+    console.log(`  G${i + 1}  M${v.mobile} T${v.tablet} D${v.desktop} — ${gr.sections.length} section(s), ${gr.sections.length * 3} measurements: ${gr.sections.join("; ")}`);
+  }
+  for (const l of incomplete) console.log(`  incomplete: ${l}`);
+
+  if (unmeasurable.size) {
+    console.log("\nNOT MEASURABLE FROM METADATA:");
+    for (const [key, bps] of unmeasurable) {
+      const [page, name, reason] = key.split("|");
+      console.log(`  ${page.replace(/^.*?--\s*V\d+\s*--\s*/, "")}: ${name} (${reason}) at ${[...new Set(bps)].join("/")}`);
+    }
+  }
+
+  /* ---- compare with base.css ---- */
+  const have = (m) => Object.fromEntries(BPS.filter((b) => m[b]).map((b) => [b, m[b].value]));
+  const cmpRows = [];
+  const toUpdate = [];
+  const asks = [];
+  for (const token of ["site-margin", "site-gutter"]) {
+    const measured = have(measures[token]);
+    if (!Object.keys(measured).length) continue;
+    const { status, cur } = compareLayout(token, measured);
+    cmpRows.push([`--${token}`, fmt(measured), cur ? fmt(cur) : "—", status]);
+    if (status === "DIFFERS") {
+      toUpdate.push(...triple(token, { ...cur, ...measured }));
+      asks.push(`--${token} is ${fmt(cur)} in base.css but the frames measure ${fmt(measured)}. Change the token, or is the design inconsistent?`);
+    }
+  }
+
+  const symmetric = groupList.filter((gr) => BPS.every((b) => typeof gr.values[b] === "number"));
+  const sectionTokens = Object.keys(tokens.scale).filter((n) => n.startsWith("section-space-"));
+  for (const t of sectionTokens) {
+    const hit = symmetric.find((gr) => compareLayout(t, gr.values).status === "MATCH");
+    cmpRows.push([`--${t}`, hit ? fmt(hit.values) : "—", fmt(tokens.scale[t]), hit ? `MATCH (G${groupList.indexOf(hit) + 1})` : "UNMAPPED"]);
+  }
+  console.log("\nCOMPARED WITH base.css (D = desktop, T = tablet, M = mobile):");
+  printTable(["TOKEN", "MEASURED", "BASE.CSS", "STATUS"], cmpRows);
+
+  for (const [i, gr] of groupList.entries()) {
+    const v = gr.values;
+    const label = `G${i + 1} (${v.mobile}/${v.tablet}/${v.desktop} mobile/tablet/desktop)`;
+    if (!symmetric.includes(gr)) {
+      asks.push(`${label}: top and bottom padding differ. Is that deliberate, and which section-space token does it belong to?`);
+      continue;
+    }
+    const tokenHits = sectionTokens.filter((t) => compareLayout(t, gr.values).status === "MATCH");
+    if (tokenHits.length) {
+      asks.push(`${label} equals ${tokenHits.map((t) => `--${t}`).join(", ")}. ASK: which token is ${v.desktop}/${v.tablet}/${v.mobile} (small/medium/large/nav-overlap)? Section default prop is medium.`);
+    } else {
+      const near = nearest(v, tokens.scale, (n) => n.startsWith("section-space-"));
+      asks.push(`${label} matches no section-space token${near ? ` (nearest --${near.name}, ${fmt(near)}, off by ${near.delta}px)` : ""}. ASK: which token is it (small/medium/large/nav-overlap), or a new one? Section default prop is medium.`);
+    }
+  }
+  if (groupList.length > 1) {
+    asks.push(`The section padding differs between sections (${groupList.length} groups). ASK: are they variants (e.g. small/large)? Settle that before mapping any of them.`);
+  }
+  for (const t of sectionTokens) {
+    if (!symmetric.some((gr) => compareLayout(t, gr.values).status === "MATCH")) {
+      asks.push(`--${t} (${fmt(tokens.scale[t])}) has no measured counterpart in these frames. ASK: does a variant use it?`);
+    }
+  }
+
+  console.log(texts.display
+    ? "\ndisplay: used by text layers in these frames (measure its size with get_design_context)."
+    : "\ndisplay: not used in these frames.");
+
+  console.log("\nTYPE STYLES USED (layer names; metadata has no sizes):");
+  const styleRows = Object.keys(texts).sort().map((s) => [
+    s,
+    `--${TYPE_STYLES[s]}`,
+    ...["mobile", "tablet", "desktop"].map((b) => {
+      const e = texts[s][b];
+      if (!e) return "—";
+      const widths = [...e.widths].sort((a, c) => a - c);
+      return `${e.n}× w${widths.length > 3 ? `${widths[0]}–${widths.at(-1)}` : widths.join("/")}`;
+    }),
+  ]);
+  if (styleRows.length) printTable(["STYLE", "TOKEN", "MOBILE", "TABLET", "DESKTOP"], styleRows);
+  else console.log("  no text layers named after a type style");
+
+  const layoutEntry = (token, m) => `    { "token": "${token}", "px": { "desktop": ${m.desktop}, "tablet": ${m.tablet}, "mobile": ${m.mobile} } }`;
+  const snippet = ["site-margin", "site-gutter"]
+    .map((t) => [t, have(measures[t])])
+    .filter(([, m]) => BPS.every((b) => m[b] !== undefined))
+    .map(([t, m]) => layoutEntry(t, m));
+  console.log("\nLAYOUT JSON (for --json; section-space groups wait for the answer below):");
+  console.log(`{\n  "layout": [\n${snippet.join(",\n")}\n  ]\n}`);
+  for (const [i, gr] of groupList.entries()) {
+    const v = gr.values;
+    if (symmetric.includes(gr)) console.log(`  G${i + 1}: { "token": "section-space-<chosen>", "px": { "desktop": ${v.desktop}, "tablet": ${v.tablet}, "mobile": ${v.mobile} } }`);
+  }
+
+  if (asks.length) {
+    console.log("\nASK BEFORE WRITING:");
+    for (const q of asks) console.log(`  - ${q}`);
+  }
+  if (toUpdate.length) {
+    console.log("\nTO UPDATE BY HAND (token exists, value differs — confirm which side is right first):");
+    for (const l of toUpdate) console.log(`  ${l}`);
+  }
+  process.exit(0);
+}
+
 /* ---------- batch: the shape Claude fills in from the Figma file ---------- */
 
 const jsonPath = flag("json");
@@ -604,7 +1057,7 @@ if (!jsonPath) {
 
 const design = JSON.parse(readFileSync(jsonPath, "utf8"));
 
-const KNOWN = ["space", "type", "color", "letter", "radius", "icon", "weight"];
+const KNOWN = ["space", "type", "color", "letter", "radius", "icon", "layout", "weight"];
 const unknown = Object.keys(design).filter((k) => !KNOWN.includes(k));
 if (unknown.length) {
   fail(`unknown key(s): ${unknown.join(", ")}. Expected any of: ${KNOWN.join(", ")}`);
@@ -645,6 +1098,34 @@ function matchScale(item, filter, prefix) {
     noteGuess(name, d);
     rows.push([item.name, from, `--${name}`, `NEW — ${d.missing.length ? `${d.missing.join("/")} guessed from --${d.ref}` : "all breakpoints measured"}`]);
     questions.push(`--${name}: ${from} is ${near ? `${near.delta}px off --${near.name} (${fmt(near)})` : "unmatched"}. New token, or consolidate?${tieNote(near) && ` (${tieNote(near)})`}`);
+  }
+}
+
+/** site-margin, site-gutter, display and section-space-*: one px (desktop) or a value per breakpoint. */
+function matchLayout(item) {
+  if (!isLayoutToken(item.token ?? "")) {
+    fail(`layout: token must be site-margin, site-gutter, display or section-space-*, got ${JSON.stringify(item.token)}`);
+  }
+  const values = perBp(item.px, item.token);
+  const from = fmt(values);
+  const label = item.name ?? item.token;
+  const { status, cur } = compareLayout(item.token, values);
+  if (status === "MATCH") {
+    rows.push([label, from, `--${item.token}`, `match${inherited(values, cur)}`]);
+  } else if (status === "DIFFERS") {
+    rows.push([label, from, `--${item.token}`, `DIFFERS — base.css has ${fmt(cur)}${inherited(values, cur)}`]);
+    updates.push(...triple(item.token, { ...cur, ...values }));
+    questions.push(`--${item.token} is ${fmt(cur)} in base.css but the design measures ${from}. Change the token, or is the design inconsistent?`);
+  } else {
+    const d = deriveMissing(values, tokens.scale, layoutFamily(item.token));
+    rows.push([label, from, `--${item.token}`, "UNMAPPED — not in base.css"]);
+    if (BPS.some((b) => d.values[b] === undefined)) {
+      questions.push(`--${item.token} is not in base.css and only ${from} was measured. Measure the other breakpoints before adding it.`);
+    } else {
+      additions.push({ name: item.token, values: d.values });
+      noteGuess(item.token, d);
+      questions.push(`--${item.token} is not in base.css (${from}). Add it?`);
+    }
   }
 }
 
@@ -794,6 +1275,8 @@ for (const item of design.letter ?? []) {
 for (const item of design.radius ?? []) matchScale(item, isRadius, "radius");
 
 for (const item of design.icon ?? []) matchScale(item, isIcon, "icon");
+
+for (const item of design.layout ?? []) matchLayout(item);
 
 for (const item of design.weight ?? []) {
   const num = typeof item.value === "number"

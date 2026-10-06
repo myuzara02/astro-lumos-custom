@@ -29,3 +29,6 @@ pnpm-debug.log*
 # project-specific Figma variable exports
 Responsive.json
 Static.json
+
+# real Figma metadata used to test the layout slicer
+.agents/skills/lumos-import-figma/samples/

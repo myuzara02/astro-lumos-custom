@@ -468,13 +468,13 @@
   /* Site layout */
   --site-margin: calc((var(--bp-mobile) * var(--site-margin-mobile) + var(--bp-tablet) * var(--site-margin-tablet) + var(--bp-desktop) * var(--site-margin-desktop)) / 16 * 1rem);
   --site-margin-mobile: 16;
-  --site-margin-tablet: 29;
-  --site-margin-desktop: 48;
+  --site-margin-tablet: 32;
+  --site-margin-desktop: 112;
 
   --site-gutter: calc((var(--bp-mobile) * var(--site-gutter-mobile) + var(--bp-tablet) * var(--site-gutter-tablet) + var(--bp-desktop) * var(--site-gutter-desktop)) / 16 * 1rem);
   --site-gutter-mobile: 16;
-  --site-gutter-tablet: 22;
-  --site-gutter-desktop: 32;
+  --site-gutter-tablet: 16;
+  --site-gutter-desktop: 20;
 
   --site-width: calc(100% - var(--site-margin) * 2);
 
@@ -569,9 +569,9 @@
   --section-space-small-tablet: 61;
   --section-space-small-desktop: 80;
   --section-space-medium: calc((var(--bp-mobile) * var(--section-space-medium-mobile) + var(--bp-tablet) * var(--section-space-medium-tablet) + var(--bp-desktop) * var(--section-space-medium-desktop)) / 16 * 1rem);
-  --section-space-medium-mobile: 64;
-  --section-space-medium-tablet: 83;
-  --section-space-medium-desktop: 112;
+  --section-space-medium-mobile: 56;
+  --section-space-medium-tablet: 64;
+  --section-space-medium-desktop: 80;
   --section-space-large: calc((var(--bp-mobile) * var(--section-space-large-mobile) + var(--bp-tablet) * var(--section-space-large-tablet) + var(--bp-desktop) * var(--section-space-large-desktop)) / 16 * 1rem);
   --section-space-large-mobile: 88;
   --section-space-large-tablet: 117;

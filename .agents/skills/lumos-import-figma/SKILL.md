@@ -71,6 +71,63 @@ and the two paths produce different work:
 Never mix the two silently. If half the tokens are measured and half derived,
 the report has to say which is which.
 
+## Layout slicing
+
+Site margin, gutter, section padding and display size are properties of the
+page, not of a component, and they can be read from geometry alone — without
+trusting node names.
+
+1. Run `get_metadata` on the page section that holds the three frames (desktop,
+   tablet, mobile) and save the XML, one file per page:
+
+   ```bash
+   node .agents/skills/lumos-import-figma/convert.mjs --metadata page.xml
+   # try it on the synthetic fixture: .agents/skills/lumos-import-figma/fixtures/sample-page.xml
+   ```
+
+2. The script tells the frames apart by **width** (`>= 992` desktop, `768-991`
+   tablet, `<= 767` mobile). The `[Desktop]` names are only a tie-break; a file
+   without exactly one frame per breakpoint is reported, not guessed. Each
+   full-width child of a page frame is a section. The content container is the
+   first descendant that is narrower than the section and inset
+   symmetrically, found by descending through single full-width children, so
+   the wrapper's name does not matter. `--wrapper <nodeId,...>` overrides where
+   it starts looking. Instances (navbar, footer) and sections with no children
+   are listed as not measurable from metadata.
+
+3. Per breakpoint it measures **site-margin** (container x), **section
+   padding** (container y above, and section height minus container bottom
+   below), and **site-gutter** (the modal gap between adjacent equal-sized
+   siblings in a row that spans at least half the container, falling back to
+   stacked siblings, marked low confidence). It prints the modal value, every
+   distinct value with its count, and each outlier with its node id, so one
+   stray 40 among thirty-twos is visible rather than averaged away. It compares
+   the result with `base.css` and prints a ready `layout` snippet for `--json`.
+
+4. It never decides which `section-space-*` token a padding group belongs to.
+   Each group is listed with its sections and an `ASK`. **If the padding groups
+   differ, ask whether they are variants (small/large, say) before mapping any
+   of them.** `display` is reported only when a text layer is named `display`;
+   otherwise the script says it is not used in these frames. It also lists
+   which type styles the page uses (layers named `h1`–`h6`, `p__lg|md|sm|xs`,
+   `overline__md|sm`) with their widths — metadata carries no sizes.
+
+5. Use `get_design_context` only for variable bindings and text styles. Its
+   fallback numbers, such as `var(--padding/4_5rem,72px)`, are **desktop-mode**
+   values: the tablet frame really renders 64. The designers here bind a
+   different variable per frame (`padding/5rem` on desktop, `padding/4_5rem` on
+   tablet and mobile) instead of relying on modes. Measured geometry from
+   metadata is the source of truth; the fallback number is not.
+
+Differences between Figma's text styles and the template's defaults — Figma H1
+Bold 700 against the project's Medium, letter spacing -2.5% against
+`-0.03em` — are **per-project slicing results**. The template keeps its
+defaults. The skill reports each difference and asks; it never applies one on
+its own.
+
+The Figma MCP guidance skill `figma-design-to-code` is not available in omp and
+is not needed here: slicing only uses the data the tools return.
+
 ## Steps
 
 1. **Read the file.** Prefer a variable export when there is one: the
@@ -129,13 +186,35 @@ the report has to say which is which.
    **Fonts.** The script also lists which Figma families are configured under
    `fonts:` in `astro.config.mjs` (`--astro-config <file>` to point elsewhere),
    which one `--primary-family` resolves to, and which `font/weight/*` values
-   have no `variants` entry — each missing weight shows as `MISSING`. It never
-   touches the network. Fixing it is either a local file under
-   `src/assets/fonts` added as a variant, or switching the entry to
-   `fontProviders.google()` where the family exists on Google Fonts. Note that
+   the entry does not cover. Coverage comes from the entry's `weights` array
+   (numbers, `"400"`, names like `"bold"`, or a range such as `"400 700"` that
+   covers every weight inside it), or from `variants[].weight` for a local
+   provider. A weight outside that shows as `MISSING`. The provider (`google`,
+   `local`) is printed. It never touches the network.
+
    "Inter Display" is the Inter family at optical size 32 (the `opsz` axis), not
-   a separate Google family, so it needs the font file or an opsz-aware setup.
-   This is an **ask the user** item: the skill reports it and does not decide.
+   a separate Google family. The known-good setup is a single Inter entry on
+   `fontProviders.google()` with the weights the design uses and the axis pinned:
+
+   ```js
+   {
+     name: "Inter",
+     cssVariable: "--font-inter",
+     provider: fontProviders.google(),
+     weights: ["400 700"],
+     styles: ["normal"],
+     options: { experimental: { variableAxis: { opsz: ["32"] } } },
+   }
+   ```
+
+   The script reads "Inter Display" as configured only when the entry is named
+   Inter and `variableAxis.opsz` is exactly `["32"]` (it prints "Inter Display =
+   Inter pinned at opsz 32"); plain Inter without that pin stays `NOT
+   CONFIGURED`. Nothing else gets this treatment. For any other missing family
+   or weight the fix is either widening `weights` on a Google entry where the
+   family exists on Google Fonts, or a local file under `src/assets/fonts` as a
+   `variants` entry. This is an **ask the user** item: the skill reports it and
+   does not decide.
 
    Padding and spacing are one scale in this system. If both exist for a step
    and disagree, the script says `CONFLICT` and asks which is right. Any
@@ -166,15 +245,19 @@ the report has to say which is which.
      "letter": [{ "name": "Hero tracking", "px": -2.4, "sizePx": 80 }],
      "radius": [{ "name": "Card corner", "px": { "desktop": 16, "tablet": 12, "mobile": 8 } }],
      "icon":   [{ "name": "Nav icon", "px": 24 }],
+     "layout": [{ "token": "section-space-medium", "px": { "desktop": 80, "tablet": 64, "mobile": 56 } }],
      "weight": [{ "name": "Heading", "value": "Medium" }],
      "color":  [{ "name": "Muted label", "hex": "#FFFFFF", "alpha": 0.6 }]
    }
    ```
 
-   `space`, `radius` and `icon` take `px`, and `type` takes `sizePx` and
+   `space`, `radius`, `icon` and `layout` take `px`, and `type` takes `sizePx` and
    `lineHeightPx`, as either a single number (a desktop measurement only) or an
    object with any of `desktop`, `tablet`, `mobile`. A breakpoint left out is a
-   guess, derived as described above.
+   guess, derived as described above. A `layout` entry names its token
+   (`site-margin`, `site-gutter`, `display` or any `section-space-*`) and is
+   compared with `base.css`: `match`, or `DIFFERS` with the three value lines
+   under `TO UPDATE BY HAND`, or `UNMAPPED` with a four-line block to place.
 
    Add `"on": "#1F1D1E"` and `"sizePx"` to a colour and the script also reports
    its WCAG contrast, using the large-text bar of 3:1 at 24px and above. These
