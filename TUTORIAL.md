@@ -55,16 +55,38 @@ The template's defaults (the safron-mango palette, 112px margin, and so on) belo
 
 Note: Figma's remote server (`mcp.figma.com`) uses OAuth and rejected omp's client registration, so use the desktop server. The Figma desktop app must stay open while you slice.
 
+## 3b. One-command start: the `figma/` folder
+
+Instead of running each mode yourself, drop everything into the `figma/` folder at the project root and let the AI read it:
+
+- variable exports (`Responsive.json`, `Static.json`, any name),
+- saved `get_metadata` XML for each page,
+- an optional inventory JSON (type styles, letter spacing, layout overrides).
+
+Files are recognised by their **content**, not their name. Then tell the AI, for example:
+
+> Read the figma folder with the `lumos-import-figma` skill. Show me the report, ask me whatever is ambiguous, and only then update `base.css`.
+
+Other phrases that work: "read the figma folder", "baca folder figma", or the name of another folder. If you give a Figma node link instead of files, the AI first saves the `get_metadata` XML into the folder (Figma desktop must be open), then runs the same command.
+
+The command behind it:
+
+```bash
+npm run slice -- --folder figma      # or --folder some-other-dir
+```
+
+It prints what it found (for example `2 variable exports, 1 metadata, 1 inventory, 2 skipped`), runs every applicable analysis, and ends with one consolidated list of questions and CSS lines to place. Unrecognised files are listed under `SKIPPED`. An empty or missing folder exits with an error. Everything in `figma/` except its README is gitignored, so design data never reaches the template.
+
 ## 4. Slicing, step by step
 
-Run everything from the project root. All commands use `node .agents/skills/lumos-import-figma/convert.mjs`, shortened to `convert` below.
+Run everything from the project root. Commands use `npm run slice --`, which runs `node .agents/skills/lumos-import-figma/convert.mjs`. (`convert` is not a shell command; `slice` is the npm script defined in `package.json`.)
 
 ### 4.1 Figma variables → tokens
 
 1. Export your Figma variable collections as JSON (for example `Responsive.json` with desktop/tablet/mobile modes, and `Static.json` for colors and fonts). Put them in the project root. They are gitignored on purpose.
 2. Run:
    ```bash
-   convert --variables Responsive.json Static.json
+   npm run slice -- --variables Responsive.json Static.json
    ```
 3. The output is a table per variable: `match`, `DIFFERS` (both values shown), or `MISSING`. The `TO UPDATE BY HAND` and `TO PLACE BY HAND` sections list the CSS lines to put in `base.css`.
 4. Modes are identified by name (case-insensitive; the typo `dekstop` is tolerated). Unknown variable groups are reported, not ignored.
@@ -79,9 +101,9 @@ Figma variables do not hold these, so measure them from node geometry.
 1. Ask the agent to call `get_metadata` on the page node (the Figma section that contains the Desktop, Tablet and Mobile frames) and save the XML, for example `page.xml`.
 2. Run:
    ```bash
-   convert --metadata page.xml
-   convert --metadata page-a.xml page-b.xml        # several pages at once
-   convert --metadata page.xml --wrapper 123:456   # when the wrapper is not detected
+   npm run slice -- --metadata page.xml
+   npm run slice -- --metadata page-a.xml page-b.xml        # several pages at once
+   npm run slice -- --metadata page.xml --wrapper 123:456   # when the wrapper is not detected
    ```
 3. Result: `site-margin`, section padding top and bottom, and `site-gutter` per breakpoint, with confidence levels and outliers, then a comparison with `base.css`: `MATCH`, `DIFFERS` or `UNMAPPED`.
 4. Breakpoints are identified by frame width, not by name. The content container is found by structure (the narrower, inset child), so the name `global-wrapper` is not required.
@@ -90,7 +112,7 @@ Figma variables do not hold these, so measure them from node geometry.
 
 A sample input lives at `.agents/skills/lumos-import-figma/fixtures/sample-page.xml`:
 ```bash
-convert --metadata .agents/skills/lumos-import-figma/fixtures/sample-page.xml
+npm run slice -- --metadata .agents/skills/lumos-import-figma/fixtures/sample-page.xml
 ```
 
 ### 4.3 Typography from text nodes
@@ -111,7 +133,7 @@ Letter spacing and text-transform are not in variables; they live on text nodes.
 }
 ```
 ```bash
-convert --json design.json
+npm run slice -- --json design.json
 ```
 
 Letter spacing is stored as one `em` value per style. If it differs between breakpoints, the skill asks instead of applying it.
@@ -119,10 +141,10 @@ Letter spacing is stored as one `em` value per style. If it differs between brea
 ### 4.4 Quick lookups
 
 ```bash
-convert --px 30                 # snap to the nearest spacing token (desktop)
-convert --px 30 --bp mobile
-convert --lh 36/32              # line height 36 on a 32 font size
-convert --color "#FFFFFF@60"    # color with alpha → color-mix
+npm run slice -- --px 30                 # snap to the nearest spacing token (desktop)
+npm run slice -- --px 30 --bp mobile
+npm run slice -- --lh 36/32              # line height 36 on a 32 font size
+npm run slice -- --color "#FFFFFF@60"    # color with alpha → color-mix
 ```
 
 ## 5. Ground rules while slicing

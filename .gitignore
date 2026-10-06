@@ -30,5 +30,9 @@ pnpm-debug.log*
 Responsive.json
 Static.json
 
+# design data dropped into figma/ (keep only its README)
+figma/*
+!figma/README.md
+
 # real Figma metadata used to test the layout slicer
 .agents/skills/lumos-import-figma/samples/

@@ -30,7 +30,8 @@
  *   node convert.mjs --metadata fixtures/sample-page.xml [--wrapper nodeId,...]
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 
 /* Moves independently of the framework: a skill fix does not need a release,
    and a release does not invalidate the skill. */
@@ -38,7 +39,7 @@ const SKILL_VERSION = "2.0.0";
 /* A pin, not a mirror: the release this skill was last checked against.
    Deriving it from package.json would make it always equal to the running
    version, and the mismatch note would never fire. */
-const TESTED_AGAINST = "0.0.1";
+const TESTED_AGAINST = "0.0.4";
 
 const ROOT_PX = 16;
 const SNAP_PX = 2; // ±2px counts as drift, not a decision
@@ -385,7 +386,8 @@ const printTable = (head, body) => {
 
 let lumosVersion = "unknown";
 try {
-  lumosVersion = JSON.parse(readFileSync("package.json", "utf8")).version;
+  const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+  lumosVersion = pkg.lumos?.version ?? pkg.version;
 } catch {}
 const printVersion = () => {
   console.log(`lumos-import-figma ${SKILL_VERSION}  ·  Lumos ${lumosVersion}`);
@@ -409,12 +411,11 @@ function compareLayout(token, have) {
   return { status: equal ? "MATCH" : "DIFFERS", cur };
 }
 
+const INVENTORY_KEYS = ["space", "type", "color", "letter", "radius", "icon", "layout", "weight"];
+
 /* ---------- Figma variable export ---------- */
 
-const variableFiles = flagAll("variables");
-if (args.includes("--variables") && !variableFiles.length) fail("--variables needs one or more files");
-
-if (variableFiles.length) {
+function runVariables(variableFiles) {
   /* Mode ids differ between files, so modes are told apart by name. */
   const modeBp = (name) => {
     const n = name.toLowerCase();
@@ -594,7 +595,6 @@ if (variableFiles.length) {
     }
   }
 
-  printVersion();
   console.log("D = desktop (>=992px), T = tablet (768-991px), M = mobile (<768px)\n");
   printTable(["FIGMA VARIABLE", "LUMOS TOKEN", "FIGMA", "LUMOS", "STATUS"], table);
   console.log(`\n${counts.match} match, ${counts.differs} differ, ${counts.missing} missing, ${unknownVars.length} unknown group`);
@@ -607,34 +607,15 @@ if (variableFiles.length) {
     console.log("\nUNKNOWN VARIABLE GROUPS (not converted):");
     for (const n of unknownVars) console.log(`  - ${n}`);
   }
-  if (asks.length) {
-    console.log("\nASK BEFORE WRITING:");
-    for (const q of asks) console.log(`  - ${q}`);
-  }
-  if (guesses.length) {
-    console.log("\nGUESSES (list in the report):");
-    for (const g of guesses) console.log(`  - ${g}`);
-  }
-  if (toUpdate.length) {
-    console.log("\nTO UPDATE BY HAND (token exists, value differs — confirm which side is right first):");
-    for (const u of toUpdate) {
-      if (u.values) for (const l of triple(u.name, u.values)) console.log(`  ${l}`);
-      else console.log(`  --${u.name}: ${u.value};`);
-    }
-  }
-  if (toPlace.length) {
-    console.log("\nTO PLACE BY HAND (section matters — put each beside its own kind):");
-    for (const a of toPlace) printBlock(a);
-  }
-  process.exit(0);
+  out.asks.push(...asks);
+  out.guesses.push(...guesses);
+  for (const u of toUpdate) out.updates.push(...(u.values ? triple(u.name, u.values) : [`--${u.name}: ${u.value};`]));
+  out.places.push(...toPlace);
 }
 
 /* ---------- Figma metadata: layout slicing ---------- */
 
-const metadataFiles = flagAll("metadata");
-if (args.includes("--metadata") && !metadataFiles.length) fail("--metadata needs one or more XML files");
-
-if (metadataFiles.length) {
+function runMetadata(metadataFiles) {
   const wrapperIds = (flag("wrapper") ?? "").split(",").filter(Boolean);
   const same = (a, b) => Math.abs(a - b) <= 1; // metadata positions are rounded
   const round2 = (n) => +n.toFixed(2);
@@ -903,7 +884,6 @@ if (metadataFiles.length) {
     return parts.every((p) => p === parts[0]) ? parts[0] : BPS.map((b, i) => `${b[0].toUpperCase()}: ${parts[i]}`).join("; ");
   };
 
-  printVersion();
   console.log("PAGES");
   for (const g of pageGroups) {
     const parts = BPS.map((b) => `${b} ${g.measured[b].page.w}px (${g.measured[b].sections.filter((s) => s.margin !== undefined).length} of ${g.measured[b].sections.length} measurable)`);
@@ -1037,297 +1017,403 @@ if (metadataFiles.length) {
     if (symmetric.includes(gr)) console.log(`  G${i + 1}: { "token": "section-space-<chosen>", "px": { "desktop": ${v.desktop}, "tablet": ${v.tablet}, "mobile": ${v.mobile} } }`);
   }
 
-  if (asks.length) {
-    console.log("\nASK BEFORE WRITING:");
-    for (const q of asks) console.log(`  - ${q}`);
-  }
-  if (toUpdate.length) {
-    console.log("\nTO UPDATE BY HAND (token exists, value differs — confirm which side is right first):");
-    for (const l of toUpdate) console.log(`  ${l}`);
-  }
-  process.exit(0);
+  out.asks.push(...asks);
+  out.updates.push(...toUpdate);
 }
 
 /* ---------- batch: the shape Claude fills in from the Figma file ---------- */
 
-const jsonPath = flag("json");
-if (!jsonPath) {
-  fail("need --json <file>, --variables <file...>, or one of --px / --lh / --color");
-}
+function runInventory(jsonPath) {
+  const design = JSON.parse(readFileSync(jsonPath, "utf8"));
 
-const design = JSON.parse(readFileSync(jsonPath, "utf8"));
-
-const KNOWN = ["space", "type", "color", "letter", "radius", "icon", "layout", "weight"];
-const unknown = Object.keys(design).filter((k) => !KNOWN.includes(k));
-if (unknown.length) {
-  fail(`unknown key(s): ${unknown.join(", ")}. Expected any of: ${KNOWN.join(", ")}`);
-}
-if (!KNOWN.some((k) => (design[k] ?? []).length)) {
-  fail("nothing to convert — every list is empty or missing.");
-}
-const rows = [];
-const additions = [];
-const questions = [];
-const contrastRows = [];
-const updates = [];
-const guesses = [];
-
-const noteGuess = (name, d) => {
-  if (d.missing.length) guesses.push(`--${name}: ${d.missing.join(", ")} guessed from --${d.ref} (${d.ratios.join(", ")}).`);
-};
-
-/** What is said about the breakpoints a token fills in because the design did not measure them. */
-const inherited = (values, near) => {
-  const missing = BPS.filter((b) => values[b] === undefined);
-  return missing.length ? ` — ${missing.join("/")} from the token (${fmt(near)})` : "";
-};
-
-/** space, radius and icon: one px (desktop) or a value per breakpoint, snapped to the scale. */
-function matchScale(item, filter, prefix) {
-  const values = perBp(item.px, item.name);
-  const from = fmt(values);
-  const near = nearest(values, tokens.scale, filter);
-  if (near && near.delta === 0) {
-    rows.push([item.name, from, `--${near.name}`, `exact${inherited(values, near)}`]);
-  } else if (near && near.delta <= SNAP_PX) {
-    rows.push([item.name, from, `--${near.name}`, `snapped, off by ${near.delta}px${inherited(values, near)}${tieNote(near) && `; ${tieNote(near)}`}`]);
-  } else {
-    const d = deriveMissing(values, tokens.scale, filter);
-    const name = item.token ?? `${prefix}-${slug(item.name)}`;
-    additions.push({ name, values: d.values });
-    noteGuess(name, d);
-    rows.push([item.name, from, `--${name}`, `NEW — ${d.missing.length ? `${d.missing.join("/")} guessed from --${d.ref}` : "all breakpoints measured"}`]);
-    questions.push(`--${name}: ${from} is ${near ? `${near.delta}px off --${near.name} (${fmt(near)})` : "unmatched"}. New token, or consolidate?${tieNote(near) && ` (${tieNote(near)})`}`);
+  const unknown = Object.keys(design).filter((k) => !INVENTORY_KEYS.includes(k));
+  if (unknown.length) {
+    fail(`unknown key(s): ${unknown.join(", ")}. Expected any of: ${INVENTORY_KEYS.join(", ")}`);
   }
-}
-
-/** site-margin, site-gutter, display and section-space-*: one px (desktop) or a value per breakpoint. */
-function matchLayout(item) {
-  if (!isLayoutToken(item.token ?? "")) {
-    fail(`layout: token must be site-margin, site-gutter, display or section-space-*, got ${JSON.stringify(item.token)}`);
+  if (!INVENTORY_KEYS.some((k) => (design[k] ?? []).length)) {
+    fail("nothing to convert — every list is empty or missing.");
   }
-  const values = perBp(item.px, item.token);
-  const from = fmt(values);
-  const label = item.name ?? item.token;
-  const { status, cur } = compareLayout(item.token, values);
-  if (status === "MATCH") {
-    rows.push([label, from, `--${item.token}`, `match${inherited(values, cur)}`]);
-  } else if (status === "DIFFERS") {
-    rows.push([label, from, `--${item.token}`, `DIFFERS — base.css has ${fmt(cur)}${inherited(values, cur)}`]);
-    updates.push(...triple(item.token, { ...cur, ...values }));
-    questions.push(`--${item.token} is ${fmt(cur)} in base.css but the design measures ${from}. Change the token, or is the design inconsistent?`);
-  } else {
-    const d = deriveMissing(values, tokens.scale, layoutFamily(item.token));
-    rows.push([label, from, `--${item.token}`, "UNMAPPED — not in base.css"]);
-    if (BPS.some((b) => d.values[b] === undefined)) {
-      questions.push(`--${item.token} is not in base.css and only ${from} was measured. Measure the other breakpoints before adding it.`);
+  const rows = [];
+  const additions = [];
+  const questions = [];
+  const contrastRows = [];
+  const updates = [];
+  const guesses = [];
+
+  const noteGuess = (name, d) => {
+    if (d.missing.length) guesses.push(`--${name}: ${d.missing.join(", ")} guessed from --${d.ref} (${d.ratios.join(", ")}).`);
+  };
+
+  /** What is said about the breakpoints a token fills in because the design did not measure them. */
+  const inherited = (values, near) => {
+    const missing = BPS.filter((b) => values[b] === undefined);
+    return missing.length ? ` — ${missing.join("/")} from the token (${fmt(near)})` : "";
+  };
+
+  /** space, radius and icon: one px (desktop) or a value per breakpoint, snapped to the scale. */
+  function matchScale(item, filter, prefix) {
+    const values = perBp(item.px, item.name);
+    const from = fmt(values);
+    const near = nearest(values, tokens.scale, filter);
+    if (near && near.delta === 0) {
+      rows.push([item.name, from, `--${near.name}`, `exact${inherited(values, near)}`]);
+    } else if (near && near.delta <= SNAP_PX) {
+      rows.push([item.name, from, `--${near.name}`, `snapped, off by ${near.delta}px${inherited(values, near)}${tieNote(near) && `; ${tieNote(near)}`}`]);
     } else {
-      additions.push({ name: item.token, values: d.values });
-      noteGuess(item.token, d);
-      questions.push(`--${item.token} is not in base.css (${from}). Add it?`);
+      const d = deriveMissing(values, tokens.scale, filter);
+      const name = item.token ?? `${prefix}-${slug(item.name)}`;
+      additions.push({ name, values: d.values });
+      noteGuess(name, d);
+      rows.push([item.name, from, `--${name}`, `NEW — ${d.missing.length ? `${d.missing.join("/")} guessed from --${d.ref}` : "all breakpoints measured"}`]);
+      questions.push(`--${name}: ${from} is ${near ? `${near.delta}px off --${near.name} (${fmt(near)})` : "unmatched"}. New token, or consolidate?${tieNote(near) && ` (${tieNote(near)})`}`);
     }
   }
-}
 
-for (const item of design.space ?? []) matchScale(item, isSpace, "space");
-
-const LETTER_EPS = 0.002; // ±0.002em counts as the same letter spacing
-
-/** letterPx / letterPct on a type entry, as em at each measured breakpoint. */
-function letterEm(item, size) {
-  if (item.letterPx !== undefined && item.letterPct !== undefined) fail(`${item.name}: give letterPx or letterPct, not both`);
-  const raw = perBp(item.letterPx ?? item.letterPct, `${item.name} letter spacing`);
-  const em = {};
-  for (const b of BPS.filter((k) => raw[k] !== undefined)) {
-    if (item.letterPct !== undefined) em[b] = raw[b] / 100;
-    else if (size[b] !== undefined) em[b] = raw[b] / size[b];
-    else fail(`${item.name}: letterPx at ${b} needs sizePx at ${b} to divide by`);
-    em[b] = +em[b].toFixed(4);
-  }
-  return em;
-}
-
-/** Letter spacing is one value per style in base.css, not one per breakpoint. */
-function matchLetter(item, size, style, name) {
-  if (item.letterPx === undefined && item.letterPct === undefined) return;
-  const em = letterEm(item, size);
-  const label = `${item.name} letter-spacing`;
-  const from = `${BPS.filter((b) => em[b] !== undefined).map((b) => `${b[0].toUpperCase()}${em[b]}`).join(" ")} em`;
-  const all = Object.values(em);
-  const styleToken = `${style ?? name}-letter-spacing`;
-  if (Math.max(...all) - Math.min(...all) > LETTER_EPS) {
-    rows.push([label, from, `--${styleToken}`, "DIFFERS by breakpoint — not applied"]);
-    questions.push(`${item.name} letter spacing is ${from}; this system has one value per style. Which one, or is the design inconsistent?`);
-    return;
-  }
-  const value = +(all.reduce((a, b) => a + b, 0) / all.length).toFixed(4);
-  const target = nearestValue(value, tokens.letterSpacing);
-  let ref = target?.name;
-  if (!target || target.delta > LETTER_EPS) {
-    const tokenName = `letter-spacing-${slug(item.name)}`;
-    additions.push({ name: tokenName, value: `${value}em` });
-    ref = `--${tokenName}`;
-  }
-  const current = style ? tokens.styleLetter[style] : null;
-  if (current && Math.abs(current.em - value) <= LETTER_EPS) {
-    rows.push([label, from, `--${styleToken}`, `match (${current.token ? `var(${current.token}) = ` : ""}${current.em}em)`]);
-    return;
-  }
-  const line = `--${styleToken}: var(${ref});`;
-  if (style) {
-    rows.push([label, from, `--${styleToken}`, `CHANGE${current ? ` from ${current.em}em` : ""} — ${line}`]);
-    updates.push(line);
-  } else {
-    rows.push([label, from, `--${styleToken}`, `NEW — set on the new style: ${line}`]);
-    additions.push({ name: styleToken, value: `var(${ref})` });
-  }
-}
-
-for (const item of design.type ?? []) {
-  const size = perBp(item.sizePx, item.name);
-  const near = nearest(size, tokens.scale, isType);
-  const matched = near && near.delta <= SNAP_PX;
-  const sizeNote = !matched ? "NEW" : near.delta === 0 ? "exact" : `snapped, off by ${near.delta}px`;
-  const name = item.token ?? slug(item.name);
-  if (matched) {
-    rows.push([item.name, fmt(size), `--${near.name}`, `${sizeNote}${inherited(size, near)}`]);
-  } else {
-    const d = deriveMissing(size, tokens.scale, isType);
-    additions.push({ name, values: d.values });
-    noteGuess(name, d);
-    rows.push([item.name, fmt(size), `--${name}`, `NEW — ${d.missing.length ? `${d.missing.join("/")} guessed from --${d.ref}` : "all breakpoints measured"}`]);
-    questions.push(`${item.name} at ${fmt(size)} is unmatched${near ? ` (nearest --${near.name}, ${fmt(near)})` : ""}. New size, or consolidate?${tieNote(near) && ` (${tieNote(near)})`}`);
+  /** site-margin, site-gutter, display and section-space-*: one px (desktop) or a value per breakpoint. */
+  function matchLayout(item) {
+    if (!isLayoutToken(item.token ?? "")) {
+      fail(`layout: token must be site-margin, site-gutter, display or section-space-*, got ${JSON.stringify(item.token)}`);
+    }
+    const values = perBp(item.px, item.token);
+    const from = fmt(values);
+    const label = item.name ?? item.token;
+    const { status, cur } = compareLayout(item.token, values);
+    if (status === "MATCH") {
+      rows.push([label, from, `--${item.token}`, `match${inherited(values, cur)}`]);
+    } else if (status === "DIFFERS") {
+      rows.push([label, from, `--${item.token}`, `DIFFERS — base.css has ${fmt(cur)}${inherited(values, cur)}`]);
+      updates.push(...triple(item.token, { ...cur, ...values }));
+      questions.push(`--${item.token} is ${fmt(cur)} in base.css but the design measures ${from}. Change the token, or is the design inconsistent?`);
+    } else {
+      const d = deriveMissing(values, tokens.scale, layoutFamily(item.token));
+      rows.push([label, from, `--${item.token}`, "UNMAPPED — not in base.css"]);
+      if (BPS.some((b) => d.values[b] === undefined)) {
+        questions.push(`--${item.token} is not in base.css and only ${from} was measured. Measure the other breakpoints before adding it.`);
+      } else {
+        additions.push({ name: item.token, values: d.values });
+        noteGuess(item.token, d);
+        questions.push(`--${item.token} is not in base.css (${from}). Add it?`);
+      }
+    }
   }
 
-  matchLetter(item, size, matched ? near.name : null, name);
+  for (const item of design.space ?? []) matchScale(item, isSpace, "space");
 
-  if (item.lineHeightPx === undefined) continue;
-  const lh = perBp(item.lineHeightPx, `${item.name} line height`);
-  const ownName = matched ? `${near.name}-line-height` : null;
-  const own = ownName && tokens.scale[ownName] ? nearest(lh, { [ownName]: tokens.scale[ownName] }) : null;
-  /* A matched size keeps its own line height; only an unmatched one looks across all of them. */
-  const lhNear = own ?? nearest(lh, tokens.scale, isLineHeight);
-  const from = fmt(lh);
-  if (lhNear && lhNear.delta <= SNAP_PX) {
-    const note = lhNear.delta === 0 ? "exact" : `snapped, off by ${lhNear.delta}px`;
-    rows.push([`${item.name} line-height`, from, `--${lhNear.name}`, `${note}${inherited(lh, lhNear)}`]);
-  } else if (own) {
-    rows.push([`${item.name} line-height`, from, `--${own.name}`, `DIFFERS by ${own.delta}px — not applied`]);
-    questions.push(`${item.name} line height ${from} is ${own.delta}px off --${own.name} (${fmt(own)}). Change that token, or keep it?`);
-  } else {
-    const lhName = `${name}-line-height`;
-    const d = deriveMissing(lh, tokens.scale, isLineHeight);
-    additions.push({ name: lhName, values: d.values });
-    noteGuess(lhName, d);
-    rows.push([`${item.name} line-height`, from, `--${lhName}`, `NEW — ${d.missing.length ? `${d.missing.join("/")} guessed from --${d.ref}` : "all breakpoints measured"}`]);
-    questions.push(`${item.name} line height ${from} has no token${lhNear ? ` (nearest --${lhNear.name}, ${fmt(lhNear)})` : ""}. Add one, or use ${lhNear ? `--${lhNear.name}` : "an existing one"}?`);
+  const LETTER_EPS = 0.002; // ±0.002em counts as the same letter spacing
+
+  /** letterPx / letterPct on a type entry, as em at each measured breakpoint. */
+  function letterEm(item, size) {
+    if (item.letterPx !== undefined && item.letterPct !== undefined) fail(`${item.name}: give letterPx or letterPct, not both`);
+    const raw = perBp(item.letterPx ?? item.letterPct, `${item.name} letter spacing`);
+    const em = {};
+    for (const b of BPS.filter((k) => raw[k] !== undefined)) {
+      if (item.letterPct !== undefined) em[b] = raw[b] / 100;
+      else if (size[b] !== undefined) em[b] = raw[b] / size[b];
+      else fail(`${item.name}: letterPx at ${b} needs sizePx at ${b} to divide by`);
+      em[b] = +em[b].toFixed(4);
+    }
+    return em;
   }
-}
 
-for (const item of design.color ?? []) {
-  const alpha = item.alpha === undefined ? 100 : Math.round(item.alpha * 100);
-  const { css: value, match } = toColorMix(item.hex, alpha, tokens.swatches);
-  const note =
-    match && match.d === 0
-      ? alpha < 100 ? "opacity restated as a mix" : "exact swatch"
-      : `NEW — nearest ${match?.name} is ${match?.d} away`;
-  const asText =
-    match && match.d === 0 && alpha < 100 && tokens.textSwatches.has(match.name);
-  rows.push([
-    item.name,
-    `${item.hex}${alpha < 100 ? ` @${alpha}%` : ""}`,
-    asText ? `color-mix(in lab, currentcolor ${alpha}%, transparent)` : value,
-    asText ? "muted text — currentcolor, so it follows the theme" : note,
-  ]);
-  if (item.on) {
-    const ratio = contrastRatio(item.hex, item.on, item.alpha ?? 1);
-    const floor = contrastFloor(item.sizePx ?? 16, item.bold);
-    contrastRows.push([
+  /** Letter spacing is one value per style in base.css, not one per breakpoint. */
+  function matchLetter(item, size, style, name) {
+    if (item.letterPx === undefined && item.letterPct === undefined) return;
+    const em = letterEm(item, size);
+    const label = `${item.name} letter-spacing`;
+    const from = `${BPS.filter((b) => em[b] !== undefined).map((b) => `${b[0].toUpperCase()}${em[b]}`).join(" ")} em`;
+    const all = Object.values(em);
+    const styleToken = `${style ?? name}-letter-spacing`;
+    if (Math.max(...all) - Math.min(...all) > LETTER_EPS) {
+      rows.push([label, from, `--${styleToken}`, "DIFFERS by breakpoint — not applied"]);
+      questions.push(`${item.name} letter spacing is ${from}; this system has one value per style. Which one, or is the design inconsistent?`);
+      return;
+    }
+    const value = +(all.reduce((a, b) => a + b, 0) / all.length).toFixed(4);
+    const target = nearestValue(value, tokens.letterSpacing);
+    let ref = target?.name;
+    if (!target || target.delta > LETTER_EPS) {
+      const tokenName = `letter-spacing-${slug(item.name)}`;
+      additions.push({ name: tokenName, value: `${value}em` });
+      ref = `--${tokenName}`;
+    }
+    const current = style ? tokens.styleLetter[style] : null;
+    if (current && Math.abs(current.em - value) <= LETTER_EPS) {
+      rows.push([label, from, `--${styleToken}`, `match (${current.token ? `var(${current.token}) = ` : ""}${current.em}em)`]);
+      return;
+    }
+    const line = `--${styleToken}: var(${ref});`;
+    if (style) {
+      rows.push([label, from, `--${styleToken}`, `CHANGE${current ? ` from ${current.em}em` : ""} — ${line}`]);
+      updates.push(line);
+    } else {
+      rows.push([label, from, `--${styleToken}`, `NEW — set on the new style: ${line}`]);
+      additions.push({ name: styleToken, value: `var(${ref})` });
+    }
+  }
+
+  for (const item of design.type ?? []) {
+    const size = perBp(item.sizePx, item.name);
+    const near = nearest(size, tokens.scale, isType);
+    const matched = near && near.delta <= SNAP_PX;
+    const sizeNote = !matched ? "NEW" : near.delta === 0 ? "exact" : `snapped, off by ${near.delta}px`;
+    const name = item.token ?? slug(item.name);
+    if (matched) {
+      rows.push([item.name, fmt(size), `--${near.name}`, `${sizeNote}${inherited(size, near)}`]);
+    } else {
+      const d = deriveMissing(size, tokens.scale, isType);
+      additions.push({ name, values: d.values });
+      noteGuess(name, d);
+      rows.push([item.name, fmt(size), `--${name}`, `NEW — ${d.missing.length ? `${d.missing.join("/")} guessed from --${d.ref}` : "all breakpoints measured"}`]);
+      questions.push(`${item.name} at ${fmt(size)} is unmatched${near ? ` (nearest --${near.name}, ${fmt(near)})` : ""}. New size, or consolidate?${tieNote(near) && ` (${tieNote(near)})`}`);
+    }
+
+    matchLetter(item, size, matched ? near.name : null, name);
+
+    if (item.lineHeightPx === undefined) continue;
+    const lh = perBp(item.lineHeightPx, `${item.name} line height`);
+    const ownName = matched ? `${near.name}-line-height` : null;
+    const own = ownName && tokens.scale[ownName] ? nearest(lh, { [ownName]: tokens.scale[ownName] }) : null;
+    /* A matched size keeps its own line height; only an unmatched one looks across all of them. */
+    const lhNear = own ?? nearest(lh, tokens.scale, isLineHeight);
+    const from = fmt(lh);
+    if (lhNear && lhNear.delta <= SNAP_PX) {
+      const note = lhNear.delta === 0 ? "exact" : `snapped, off by ${lhNear.delta}px`;
+      rows.push([`${item.name} line-height`, from, `--${lhNear.name}`, `${note}${inherited(lh, lhNear)}`]);
+    } else if (own) {
+      rows.push([`${item.name} line-height`, from, `--${own.name}`, `DIFFERS by ${own.delta}px — not applied`]);
+      questions.push(`${item.name} line height ${from} is ${own.delta}px off --${own.name} (${fmt(own)}). Change that token, or keep it?`);
+    } else {
+      const lhName = `${name}-line-height`;
+      const d = deriveMissing(lh, tokens.scale, isLineHeight);
+      additions.push({ name: lhName, values: d.values });
+      noteGuess(lhName, d);
+      rows.push([`${item.name} line-height`, from, `--${lhName}`, `NEW — ${d.missing.length ? `${d.missing.join("/")} guessed from --${d.ref}` : "all breakpoints measured"}`]);
+      questions.push(`${item.name} line height ${from} has no token${lhNear ? ` (nearest --${lhNear.name}, ${fmt(lhNear)})` : ""}. Add one, or use ${lhNear ? `--${lhNear.name}` : "an existing one"}?`);
+    }
+  }
+
+  for (const item of design.color ?? []) {
+    const alpha = item.alpha === undefined ? 100 : Math.round(item.alpha * 100);
+    const { css: value, match } = toColorMix(item.hex, alpha, tokens.swatches);
+    const note =
+      match && match.d === 0
+        ? alpha < 100 ? "opacity restated as a mix" : "exact swatch"
+        : `NEW — nearest ${match?.name} is ${match?.d} away`;
+    const asText =
+      match && match.d === 0 && alpha < 100 && tokens.textSwatches.has(match.name);
+    rows.push([
       item.name,
-      `${item.hex}${alpha < 100 ? ` @${alpha}%` : ""} on ${item.on}`,
-      `${ratio}:1`,
-      ratio >= floor ? `passes (needs ${floor})` : `FAILS — needs ${floor}:1`,
+      `${item.hex}${alpha < 100 ? ` @${alpha}%` : ""}`,
+      asText ? `color-mix(in lab, currentcolor ${alpha}%, transparent)` : value,
+      asText ? "muted text — currentcolor, so it follows the theme" : note,
     ]);
+    if (item.on) {
+      const ratio = contrastRatio(item.hex, item.on, item.alpha ?? 1);
+      const floor = contrastFloor(item.sizePx ?? 16, item.bold);
+      contrastRows.push([
+        item.name,
+        `${item.hex}${alpha < 100 ? ` @${alpha}%` : ""} on ${item.on}`,
+        `${ratio}:1`,
+        ratio >= floor ? `passes (needs ${floor})` : `FAILS — needs ${floor}:1`,
+      ]);
+    }
+
+    if (!match || match.d !== 0) {
+      additions.push({ name: item.token ?? `color-${slug(item.name)}`, value });
+      questions.push(`${item.name} ${item.hex} matches no swatch (nearest ${match?.name}). New color, or use the existing one?`);
+    }
   }
 
-  if (!match || match.d !== 0) {
-    additions.push({ name: item.token ?? `color-${slug(item.name)}`, value });
-    questions.push(`${item.name} ${item.hex} matches no swatch (nearest ${match?.name}). New color, or use the existing one?`);
+  for (const item of design.letter ?? []) {
+    const em = item.pct !== undefined
+      ? +(item.pct / 100).toFixed(4)
+      : +(item.px / item.sizePx).toFixed(4);
+    const near = nearestValue(em, tokens.letterSpacing);
+    const from = item.pct !== undefined ? `${item.pct}%` : `${item.px}/${item.sizePx}`;
+    if (near && near.delta <= 0.005) {
+      rows.push([item.name, from, `${em}em`, `snapped to ${near.name}`]);
+    } else {
+      const name = item.token ?? `letter-spacing-${slug(item.name)}`;
+      additions.push({ name, value: `${em}em` });
+      rows.push([item.name, from, `${em}em`, `NEW — nearest ${near?.name} is ${near?.delta.toFixed(4)} away`]);
+      questions.push(`${item.name} letter-spacing ${em}em has no token. Add one, or use ${near?.name}?`);
+    }
   }
+
+  for (const item of design.radius ?? []) matchScale(item, isRadius, "radius");
+
+  for (const item of design.icon ?? []) matchScale(item, isIcon, "icon");
+
+  for (const item of design.layout ?? []) matchLayout(item);
+
+  for (const item of design.weight ?? []) {
+    const num = typeof item.value === "number"
+      ? item.value
+      : WEIGHT_NAMES[String(item.value).toLowerCase().replace(/[^a-z]/g, "")];
+    if (!num) {
+      rows.push([item.name, String(item.value), "?", "UNKNOWN weight name"]);
+      questions.push(`${item.name}: could not read the weight "${item.value}".`);
+      continue;
+    }
+    const near = nearestValue(num, tokens.weights);
+    if (near && near.delta === 0) {
+      rows.push([item.name, String(item.value), near.name, `exact (${num})`]);
+    } else {
+      rows.push([item.name, String(item.value), String(num), `NEW — nearest ${near?.name} is ${near?.value}`]);
+      questions.push(`${item.name} is weight ${num}; the system has ${Object.values(tokens.weights).join(", ")}. Add it, or use ${near?.name}?`);
+    }
+  }
+
+  console.log("D = desktop (>=992px), T = tablet (768-991px), M = mobile (<768px)\n");
+  printTable(["FROM", "FIGMA", "LUMOS", "NOTE"], rows);
+
+  if (contrastRows.length) {
+    const cw = [0, 1, 2, 3].map((i) => Math.max(...contrastRows.map((r) => String(r[i]).length), 4));
+    console.log("\nCONTRAST (flagged, not blocking):");
+    for (const r of contrastRows) {
+      console.log("  " + r.map((c, i) => String(c).padEnd(cw[i])).join("  "));
+    }
+  }
+
+  out.guesses.push(...guesses);
+  out.asks.push(...questions);
+  out.updates.push(...updates);
+  out.places.push(...additions);
 }
 
-for (const item of design.letter ?? []) {
-  const em = item.pct !== undefined
-    ? +(item.pct / 100).toFixed(4)
-    : +(item.px / item.sizePx).toFixed(4);
-  const near = nearestValue(em, tokens.letterSpacing);
-  const from = item.pct !== undefined ? `${item.pct}%` : `${item.px}/${item.sizePx}`;
-  if (near && near.delta <= 0.005) {
-    rows.push([item.name, from, `${em}em`, `snapped to ${near.name}`]);
-  } else {
-    const name = item.token ?? `letter-spacing-${slug(item.name)}`;
-    additions.push({ name, value: `${em}em` });
-    rows.push([item.name, from, `${em}em`, `NEW — nearest ${near?.name} is ${near?.delta.toFixed(4)} away`]);
-    questions.push(`${item.name} letter-spacing ${em}em has no token. Add one, or use ${near?.name}?`);
+/* ---------- run ---------- */
+
+/** Value of --name, or the fallback when the flag has no value. */
+const optionValue = (name, fallback) => {
+  const i = args.indexOf(`--${name}`);
+  if (i === -1) return undefined;
+  const next = args[i + 1];
+  return next === undefined || next.startsWith("--") ? fallback : next;
+};
+
+/** Every file in a folder, sorted into the mode that reads it, by what is inside it. */
+function scanFolder(dir) {
+  let names;
+  try {
+    names = readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isFile() && !e.name.startsWith(".") && !e.name.endsWith(".md"))
+      .map((e) => e.name)
+      .sort();
+  } catch {
+    fail(`FOLDER ${dir}: cannot read the folder — does it exist?`);
   }
+  const found = { variables: [], metadata: [], inventories: [], skipped: [] };
+  for (const name of names) {
+    const path = join(dir, name);
+    const text = readFileSync(path, "utf8").trimStart();
+    const skip = (reason) => found.skipped.push({ name, reason });
+    if (text[0] === "{" || text[0] === "[") {
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        skip(`invalid JSON (${e.message})`);
+        continue;
+      }
+      const keys = Array.isArray(data) ? [] : Object.keys(data);
+      const bad = keys.filter((k) => !INVENTORY_KEYS.includes(k));
+      if (Array.isArray(data)) skip("JSON array, expected an object");
+      else if (data.modes && typeof data.modes === "object" && Array.isArray(data.variables)) found.variables.push(path);
+      else if (!keys.length) skip("empty JSON object");
+      else if (bad.length) skip(`neither a variable export nor an inventory (unknown key(s): ${bad.join(", ")})`);
+      else if (!keys.some((k) => (data[k] ?? []).length)) skip("inventory with every list empty");
+      else found.inventories.push(path);
+    } else if (text[0] === "<") {
+      const tag = text.match(/^(?:<\?[^>]*\?>\s*)*<\s*([\w-]+)/)?.[1];
+      if (["section", "frame", "canvas", "instance"].includes(tag)) found.metadata.push(path);
+      else skip(`XML starting with <${tag ?? "?"}>, not get_metadata output`);
+    } else {
+      skip("not JSON or XML");
+    }
+  }
+  return { ...found, count: names.length };
 }
 
-for (const item of design.radius ?? []) matchScale(item, isRadius, "radius");
+const variableList = flagAll("variables");
+const metadataList = flagAll("metadata");
+const inventoryList = flagAll("json").slice(0, 1);
+if (args.includes("--variables") && !variableList.length) fail("--variables needs one or more files");
+if (args.includes("--metadata") && !metadataList.length) fail("--metadata needs one or more XML files");
+if (args.includes("--json") && !inventoryList.length) fail("--json needs a file");
 
-for (const item of design.icon ?? []) matchScale(item, isIcon, "icon");
-
-for (const item of design.layout ?? []) matchLayout(item);
-
-for (const item of design.weight ?? []) {
-  const num = typeof item.value === "number"
-    ? item.value
-    : WEIGHT_NAMES[String(item.value).toLowerCase().replace(/[^a-z]/g, "")];
-  if (!num) {
-    rows.push([item.name, String(item.value), "?", "UNKNOWN weight name"]);
-    questions.push(`${item.name}: could not read the weight "${item.value}".`);
-    continue;
-  }
-  const near = nearestValue(num, tokens.weights);
-  if (near && near.delta === 0) {
-    rows.push([item.name, String(item.value), near.name, `exact (${num})`]);
-  } else {
-    rows.push([item.name, String(item.value), String(num), `NEW — nearest ${near?.name} is ${near?.value}`]);
-    questions.push(`${item.name} is weight ${num}; the system has ${Object.values(tokens.weights).join(", ")}. Add it, or use ${near?.name}?`);
-  }
+const folder = optionValue("folder", "figma");
+let folderMode = false;
+let found = null;
+if (folder !== undefined) {
+  folderMode = true;
+  found = scanFolder(folder);
+  if (!found.count) fail(`FOLDER ${folder.replace(/\/$/, "")}/: no files found — drop a variable export, get_metadata XML or inventory JSON there.`);
+  variableList.push(...found.variables);
+  metadataList.push(...found.metadata);
+  inventoryList.push(...found.inventories);
 }
 
-/* ---------- report ---------- */
+if (!variableList.length && !metadataList.length && !inventoryList.length) {
+  if (found) {
+    console.error(`FOLDER ${folder.replace(/\/$/, "")}/: ${found.count} file(s), none recognised.`);
+    for (const s of found.skipped) console.error(`  - ${s.name}: ${s.reason}`);
+    process.exit(1);
+  }
+  fail("need --folder [dir], --json <file>, --variables <file...>, --metadata <file...>, or one of --px / --lh / --color");
+}
+
+/* What every mode adds to; printed once at the end, so a folder run asks each question once. */
+const out = { asks: [], guesses: [], updates: [], places: [] };
+const heading = (title) => {
+  if (folderMode) console.log(`\n=== ${title} ===\n`);
+};
 
 printVersion();
-console.log("D = desktop (>=992px), T = tablet (768-991px), M = mobile (<768px)\n");
-printTable(["FROM", "FIGMA", "LUMOS", "NOTE"], rows);
-
-if (contrastRows.length) {
-  const cw = [0, 1, 2, 3].map((i) => Math.max(...contrastRows.map((r) => String(r[i]).length), 4));
-  console.log("\nCONTRAST (flagged, not blocking):");
-  for (const r of contrastRows) {
-    console.log("  " + r.map((c, i) => String(c).padEnd(cw[i])).join("  "));
+if (found) {
+  const dir = `${folder.replace(/\/$/, "")}/`;
+  const listed = (label, paths) => paths.length && console.log(`  ${label}: ${paths.map((p) => p.slice(dir.length)).join(", ")}`);
+  console.log(`FOLDER ${dir}: ${found.variables.length} variable export(s), ${found.metadata.length} metadata, ${found.inventories.length} inventor${found.inventories.length === 1 ? "y" : "ies"}, ${found.skipped.length} skipped`);
+  listed("variable exports", found.variables);
+  listed("metadata", found.metadata);
+  listed("inventories", found.inventories);
+  if (found.skipped.length) {
+    console.log("SKIPPED (not recognised):");
+    for (const s of found.skipped) console.log(`  - ${s.name}: ${s.reason}`);
   }
 }
 
+if (variableList.length) {
+  heading(`VARIABLES (${variableList.length} file(s))`);
+  runVariables(variableList);
+}
+if (metadataList.length) {
+  heading(`METADATA (${metadataList.length} file(s))`);
+  runMetadata(metadataList);
+}
+for (const file of inventoryList) {
+  heading(`INVENTORY ${file}`);
+  runInventory(file);
+}
+
+const unique = (list) => [...new Set(list)];
+const guesses = unique(out.guesses);
+const asks = unique(out.asks);
+const updates = unique(out.updates);
+const places = out.places.filter((a, i) => out.places.findIndex((b) => b.name === a.name) === i);
+if (folderMode) console.log("\n=== CONSOLIDATED ===");
 if (guesses.length) {
   console.log("\nGUESSES (list in the report):");
   for (const g of guesses) console.log(`  - ${g}`);
 }
-
-if (questions.length) {
+if (asks.length) {
   console.log("\nASK BEFORE WRITING:");
-  for (const q of questions) console.log(`  - ${q}`);
+  for (const q of asks) console.log(`  - ${q}`);
 }
-
-/* ---------- handoff ---------- */
-
 if (updates.length) {
-  console.log("\nTO UPDATE BY HAND (style exists, value differs — confirm which side is right first):");
+  console.log("\nTO UPDATE BY HAND (value differs — confirm which side is right first):");
   for (const u of updates) console.log(`  ${u}`);
 }
-
-if (additions.length) {
+if (places.length) {
   console.log("\nTO PLACE BY HAND (section matters — put each beside its own kind):");
-  for (const a of additions) printBlock(a);
+  for (const a of places) printBlock(a);
 }

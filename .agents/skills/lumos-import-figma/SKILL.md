@@ -1,6 +1,6 @@
 ---
 name: lumos-import-figma
-description: Build a page or fill in Lumos for Astro variables from a Figma file, especially a messy one missing global variables. Use when the user shares a Figma link or design and asks to implement it, translate it into Lumos, fill in the design tokens, or when the design's spacing, type and color are inconsistent and need reconciling against src/styles/base.css.
+description: Build a page or fill in Lumos for Astro variables from a Figma file or folder, especially a messy one missing global variables. Use when the user shares a Figma link or design, or says "read the figma folder" / "baca folder figma" / names a folder of Figma exports, and asks to implement it, translate it into Lumos, fill in the design tokens, or when the design's spacing, type and color are inconsistent and need reconciling against src/styles/base.css.
 ---
 
 # Building Lumos from a Figma file
@@ -13,6 +13,31 @@ and to be explicit about every guess.
 over an inconsistency in the design. Surface it and ask.** Two paddings that
 differ by 6px are usually one padding drawn twice. Ask which it is before
 writing anything.
+
+## One-command start
+
+The user drops everything the design gave them into `figma/` — variable
+exports, saved `get_metadata` XML, inventory JSON — and says "read the figma
+folder", "baca folder figma", or names another folder. Then:
+
+```bash
+node .agents/skills/lumos-import-figma/convert.mjs --folder figma
+```
+
+(`npm run slice -- --folder figma` is the same.) The folder is the default when
+`--folder` has no value. Every file is recognised by what is inside it, not by
+its name: a JSON with `modes` and `variables` is a variable export, XML that
+starts with a `section`, `frame`, `canvas` or `instance` tag is metadata, and a
+JSON whose keys are all inventory keys is an inventory. Anything else, and any
+invalid JSON, is listed under `SKIPPED (not recognised)` rather than failing the
+run. An empty or missing folder exits non-zero.
+
+The agent shows the consolidated report, puts the single `ASK BEFORE WRITING`
+list to the user, and edits `base.css` only after the answers.
+
+If the user gives a Figma node link instead of files, first save its
+`get_metadata` XML into the folder through the Figma MCP, then run the same
+command. The steps below explain what each part of the report means.
 
 ## What Figma cannot say
 
