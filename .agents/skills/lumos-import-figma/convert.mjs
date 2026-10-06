@@ -23,6 +23,8 @@
  *
  * Usage
  *   node convert.mjs --variables Responsive.json Static.json [--css path/to/base.css] [--astro-config path]
+ *   node convert.mjs --design-context about-desktop.txt about-tablet.txt
+ *   node convert.mjs --folder [figma]
  *   node convert.mjs --json design.json [--css path/to/base.css]
  *   node convert.mjs --px 30 [--bp tablet|mobile]
  *   node convert.mjs --lh 36/32 [--bp tablet|mobile]
@@ -111,7 +113,15 @@ function readTokens(css) {
     styleLetter[m[1]] = { token: m[2] ?? null, em: m[2] ? letterSpacing[m[2]] : Number(m[3]) };
   }
 
-  return { scale, lineHeights, letterSpacing, styleLetter, weights, swatches, textSwatches };
+  const styleWeight = {};
+  for (const m of css.matchAll(/--([a-z0-9-]+)-font-weight:\s*(?:var\((--primary-[a-z]+)\)|(\d+))/g)) {
+    styleWeight[m[1]] = { token: m[2] ?? null, value: m[2] ? weights[m[2]] : Number(m[3]) };
+  }
+
+  const styleTransform = {};
+  for (const m of css.matchAll(/--([a-z0-9-]+)-text-transform:\s*([a-z]+)/g)) styleTransform[m[1]] = m[2];
+
+  return { scale, lineHeights, letterSpacing, styleLetter, styleWeight, styleTransform, weights, swatches, textSwatches };
 }
 
 /** The families under `fonts:` in astro.config.mjs: provider, weights covered, and any pinned variable axes. */
@@ -411,9 +421,36 @@ function compareLayout(token, have) {
   return { status: equal ? "MATCH" : "DIFFERS", cur };
 }
 
+const LETTER_EPS = 0.002; // ±0.002em counts as the same letter spacing
+/** What the variable export said about each token, for the checks that come after it. */
+const varStatus = new Map();
 const INVENTORY_KEYS = ["space", "type", "color", "letter", "radius", "icon", "layout", "weight"];
 
 /* ---------- Figma variable export ---------- */
+
+const BODY = { lg: "text-large", md: "text-main", sm: "text-small", xs: "text-xsmall" };
+const OVERLINE = { sm: "overline-small", md: "overline-main" };
+
+/** Figma variable name to the Lumos token it should be, or null for a group this skill does not know. */
+function tokenFor(name) {
+  const path = name
+    .replace(/\s*\[[^\]]*\]$/, "")
+    .split("/")
+    .map((s) => s.toLowerCase().replace(/[_\s]+/g, "-"));
+  const [a, b, c] = path;
+  if (a === "font-size" || a === "line-height") {
+    const base = b === "heading" && /^h[1-6]$/.test(c) ? c : b === "body" ? BODY[c] : b === "overline" ? OVERLINE[c] : null;
+    if (!base) return null;
+    return { token: a === "font-size" ? base : `${base}-line-height`, kind: "scale" };
+  }
+  if (a === "padding" || a === "spacing") return b ? { token: `space-${b}`, kind: "scale" } : null;
+  if (a === "corner-radius") return b ? { token: `radius-${b}`, kind: "scale" } : null;
+  if (a === "icon-size") return b ? { token: `icon-${b}`, kind: "scale" } : null;
+  if (a === "color") return path.length > 2 ? { token: `color-${path.slice(1).join("-")}`, kind: "color" } : null;
+  if (a === "font" && b === "weight" && c) return { token: `primary-${c.replace(/-/g, "")}`, kind: "weight" };
+  if (a === "font" && b === "family" && c) return { token: "primary-family", kind: "family" };
+  return null;
+}
 
 function runVariables(variableFiles) {
   /* Mode ids differ between files, so modes are told apart by name. */
@@ -422,30 +459,6 @@ function runVariables(variableFiles) {
     if (/^de[sk]+top$/.test(n)) return "desktop"; // tolerates the "dekstop" typo
     return BPS.includes(n) ? n : null;
   };
-
-  const BODY = { lg: "text-large", md: "text-main", sm: "text-small", xs: "text-xsmall" };
-  const OVERLINE = { sm: "overline-small", md: "overline-main" };
-
-  /** Figma variable name to the Lumos token it should be, or null for a group this skill does not know. */
-  function tokenFor(name) {
-    const path = name
-      .replace(/\s*\[[^\]]*\]$/, "")
-      .split("/")
-      .map((s) => s.toLowerCase().replace(/[_\s]+/g, "-"));
-    const [a, b, c] = path;
-    if (a === "font-size" || a === "line-height") {
-      const base = b === "heading" && /^h[1-6]$/.test(c) ? c : b === "body" ? BODY[c] : b === "overline" ? OVERLINE[c] : null;
-      if (!base) return null;
-      return { token: a === "font-size" ? base : `${base}-line-height`, kind: "scale" };
-    }
-    if (a === "padding" || a === "spacing") return b ? { token: `space-${b}`, kind: "scale" } : null;
-    if (a === "corner-radius") return b ? { token: `radius-${b}`, kind: "scale" } : null;
-    if (a === "icon-size") return b ? { token: `icon-${b}`, kind: "scale" } : null;
-    if (a === "color") return path.length > 2 ? { token: `color-${path.slice(1).join("-")}`, kind: "color" } : null;
-    if (a === "font" && b === "weight" && c) return { token: `primary-${c.replace(/-/g, "")}`, kind: "weight" };
-    if (a === "font" && b === "family" && c) return { token: "primary-family", kind: "family" };
-    return null;
-  }
 
   const resolved = (v, id) => v.resolvedValuesByMode?.[id]?.resolvedValue ?? v.valuesByMode[id];
   const toHex = ({ r, g, b }) =>
@@ -515,19 +528,23 @@ function runVariables(variableFiles) {
       const have = Object.fromEntries(BPS.filter((b) => e.values[b] !== undefined).map((b) => [b, e.values[b]]));
       const token = tokens.scale[e.token];
       if (e.conflict) {
+        varStatus.set(e.token, "differs");
         table.push([from, `--${e.token}`, fmt(have), token ? fmt(token) : "—", "CONFLICT"]);
         counts.differs++;
         asks.push(`${from} disagree in some mode. Which is right for --${e.token}?`);
       } else if (!token) {
+        varStatus.set(e.token, "missing");
         const d = deriveMissing(have, tokens.scale, familyOf(e.token));
         table.push([from, `--${e.token}`, fmt(have), "—", d.missing.length ? `MISSING (${d.missing.join("/")} guessed)` : "MISSING"]);
         counts.missing++;
         toPlace.push({ name: e.token, values: d.values });
         if (d.missing.length) guesses.push(`--${e.token}: ${d.missing.join(", ")} guessed from --${d.ref} (${d.ratios.join(", ")}).`);
       } else if (BPS.every((b) => have[b] === undefined || have[b] === token[b])) {
+        varStatus.set(e.token, "match");
         table.push([from, `--${e.token}`, fmt(have), fmt(token), "match"]);
         counts.match++;
       } else {
+        varStatus.set(e.token, "differs");
         table.push([from, `--${e.token}`, fmt(have), fmt(token), "DIFFERS"]);
         counts.differs++;
         toUpdate.push({ name: e.token, values: { ...token, ...have } });
@@ -611,6 +628,165 @@ function runVariables(variableFiles) {
   out.guesses.push(...guesses);
   for (const u of toUpdate) out.updates.push(...(u.values ? triple(u.name, u.values) : [`--${u.name}: ${u.value};`]));
   out.places.push(...toPlace);
+}
+
+/* ---------- Figma design context: text styles ---------- */
+
+/** Weight, tracking, line-height variable and text-transform for every text style a get_design_context capture uses. */
+function runDesignContext(files) {
+  const rows = new Map();
+  const norm = (s) => s.replace(/\\\//g, "/").replace(/\\/g, "");
+  const weightName = (s) => s?.split("/").pop().toLowerCase().replace(/[^a-z]/g, "");
+  const ensure = (sizeVar, weight, name) => {
+    const key = `${sizeVar.toLowerCase()}|${weight}`;
+    if (!rows.has(key)) {
+      rows.set(key, { sizeVar, weight, weightName: name, styles: new Set(), lhVars: new Set(), letters: new Set(), transforms: new Set(), nodes: 0 });
+    }
+    return rows.get(key);
+  };
+
+  for (const file of files) {
+    const text = readFileSync(file, "utf8");
+    /* The styles line: "Heading/H1: Font(family: …, size: …, weight: 700, lineHeight: …, letterSpacing: -2.5)". letterSpacing is percent. */
+    const at = text.indexOf("These styles are contained in the design");
+    for (const m of (at === -1 ? "" : text.slice(at)).matchAll(/([A-Za-z][^:(),]*?):\s*Font\(([^)]*)\)/g)) {
+      const f = Object.fromEntries(m[2].split(/,\s*(?=[a-zA-Z]+:)/).map((kv) => [kv.slice(0, kv.indexOf(":")).trim(), kv.slice(kv.indexOf(":") + 1).trim()]));
+      const weight = Number(f.weight);
+      if (!f.size || !weight) continue;
+      const row = ensure(f.size, weight, weightName(f.style));
+      row.styles.add(m[1].trim());
+      if (f.lineHeight) row.lhVars.add(f.lineHeight.toLowerCase());
+      if (f.letterSpacing !== undefined) row.letters.add(Number(f.letterSpacing.replace("%", "")));
+    }
+    /* The node classes carry the variable names, and the only place text-transform shows up. The px fallbacks are desktop-mode values and are ignored. */
+    for (const tag of text.matchAll(/<[a-zA-Z][^>]*\bdata-node-id="[^"]*"[^>]*>/g)) {
+      const cls = norm(tag[0].match(/className="([^"]*)"/)?.[1] ?? "");
+      const size = cls.match(/text-\[length:var\(--(font-size\/[^,)]+)/)?.[1];
+      const weight = WEIGHT_NAMES[weightName(cls.match(/font-\[var\(--(font\/weight\/[^,)]+)/)?.[1]) ?? ""];
+      if (!size || !weight) continue;
+      const row = ensure(size, weight, weightName(cls.match(/font-\[var\(--(font\/weight\/[^,)]+)/)[1]));
+      row.nodes++;
+      row.transforms.add(cls.match(/\b(uppercase|lowercase|capitalize)\b/)?.[1] ?? "none");
+      const lh = cls.match(/leading-\[var\(--(line-height\/[^,)]+)/)?.[1];
+      if (lh) row.lhVars.add(lh.toLowerCase());
+    }
+  }
+  if (!rows.size) {
+    console.log("No text styles found in the design-context capture(s) — expected the 'These styles are contained in the design' line.");
+    return;
+  }
+
+  for (const r of rows.values()) {
+    const hit = /^font-size\//i.test(r.sizeVar) ? tokenFor(r.sizeVar) : null;
+    r.token = hit && hit.kind === "scale" && !isLineHeight(hit.token) ? hit.token : null;
+  }
+  const byToken = new Map();
+  for (const r of rows.values()) if (r.token) byToken.set(r.token, [...(byToken.get(r.token) ?? []), r]);
+  const spread = (values) => values.length > 0 && Math.max(...values) - Math.min(...values) > LETTER_EPS * 100;
+
+  const table = [];
+  const weightLines = [];
+  const asked = new Set();
+  const em = (pct) => +(pct / 100).toFixed(4);
+  for (const r of [...rows.values()].sort((a, b) => (a.token ?? "~").localeCompare(b.token ?? "~") || a.weight - b.weight)) {
+    const names = [...r.styles].join(", ") || "(from code, no style name)";
+    const letters = [...r.letters];
+    const transform = r.nodes ? ([...r.transforms].length === 1 ? [...r.transforms][0] : "mixed") : null;
+    const figma = [
+      `w${r.weight}${r.weightName ? ` ${r.weightName}` : ""}`,
+      letters.length ? letters.map((l) => `${em(l)}em`).join("/") : "tracking n/a",
+      [...r.lhVars].join("/") || "line height n/a",
+      transform && transform !== "none" ? transform : null,
+    ].filter(Boolean).join(" · ");
+    const T = r.token;
+    if (!T || !tokens.scale[T]) {
+      table.push([names, figma, "—", "UNMAPPED", "—"]);
+      out.asks.push(`${names}: ${T ? `--${T} is not in base.css` : `size ${r.sizeVar} maps to no text token`}. Which token is this style, or is it new?`);
+      continue;
+    }
+    const curW = tokens.styleWeight[T];
+    const curL = tokens.styleLetter[T];
+    const curT = tokens.styleTransform[T];
+    const base = [
+      curW ? `w${curW.value}${curW.token ? ` (${curW.token})` : ""}` : "weight n/a",
+      curL ? `${curL.em}em${curL.token ? ` (${curL.token})` : ""}` : "tracking n/a",
+      `--${T}-line-height`,
+      curT && curT !== "none" ? curT : null,
+    ].filter(Boolean).join(" · ");
+
+    const siblings = byToken.get(T);
+    const weights = [...new Set(siblings.map((s) => s.weight))];
+    const allLetters = siblings.flatMap((s) => [...s.letters]);
+    const conflicts = [];
+    if (weights.length > 1) conflicts.push("weight");
+    if (spread(allLetters)) conflicts.push("letter-spacing");
+    if (transform === "mixed") conflicts.push("text-transform");
+    if (conflicts.length && !asked.has(T)) {
+      asked.add(T);
+      const detail = [];
+      if (weights.length > 1) detail.push(`weights ${siblings.map((s) => `${s.weight} (${[...s.styles].join(", ") || "unnamed"})`).join(" and ")}`);
+      if (spread(allLetters)) detail.push(`letter spacing ${[...new Set(allLetters)].map((l) => `${em(l)}em`).join(" and ")}`);
+      if (transform === "mixed") detail.push("both transformed and plain text");
+      out.asks.push(`--${T} is used with ${detail.join("; ")}, but base.css has one value per style (weight ${curW?.value ?? "n/a"}). Which is the default, and are the others variants handled by another class?`);
+    }
+
+    const diffs = [];
+    if (curW?.value !== r.weight) diffs.push(`weight ${r.weight} vs project ${curW?.value ?? "n/a"}${curW?.token ? ` (${curW.token})` : ""}`);
+    if (letters.length === 1 && Math.abs((curL?.em ?? 0) - em(letters[0])) > LETTER_EPS) {
+      diffs.push(`letter spacing ${em(letters[0])}em vs project ${curL?.em ?? "n/a"}em${curL?.token ? ` (${curL.token})` : ""}`);
+    }
+    if (transform && transform !== "mixed" && (curT ?? "none") !== transform) diffs.push(`text-transform ${transform} vs project ${curT ?? "none"}`);
+
+    const own = (what) => !conflicts.includes(what);
+    const kinds = diffs.map((d) => d.split(" ")[0] === "letter" ? "letter-spacing" : d.split(" ")[0]);
+    if (curW?.value !== r.weight && own("weight")) {
+      let ref = Object.entries(tokens.weights).find(([, v]) => v === r.weight)?.[0];
+      if (!ref) {
+        const name = `primary-${r.weightName ?? `w${r.weight}`}`;
+        out.places.push({ name, value: String(r.weight) });
+        ref = `--${name}`;
+      }
+      out.updates.push(`--${T}-font-weight: var(${ref});`);
+    }
+    if (letters.length === 1 && own("letter-spacing") && Math.abs((curL?.em ?? 0) - em(letters[0])) > LETTER_EPS) {
+      const value = em(letters[0]);
+      const reuse = nearestValue(value, tokens.letterSpacing);
+      let ref = reuse?.name;
+      if (!reuse || reuse.delta > LETTER_EPS) {
+        const pct = +letters[0].toFixed(3);
+        const name = `letter-spacing-${pct < 0 ? "neg-" : ""}${String(Math.abs(pct)).replace(".", "-")}`;
+        out.places.push({ name, value: `${value}em` });
+        ref = `--${name}`;
+      }
+      out.updates.push(`--${T}-letter-spacing: var(${ref});`);
+    }
+    if (transform && transform !== "mixed" && own("text-transform") && (curT ?? "none") !== transform) {
+      out.updates.push(`--${T}-text-transform: ${transform};`);
+    }
+
+    const lhTokens = [...r.lhVars].map((v) => tokenFor(v)?.token);
+    const lhNote = !r.lhVars.size ? "n/a"
+      : lhTokens.every((t) => t === `${T}-line-height`)
+        ? { match: "triples match", differs: "triples DIFFER", missing: "token missing" }[varStatus.get(`${T}-line-height`)] ?? "own token; add --variables to compare"
+        : `uses ${lhTokens.map((t) => `--${t}`).join("/")}`;
+    if (lhTokens.some((t) => t !== `${T}-line-height`) && r.lhVars.size) {
+      out.asks.push(`${names}: its line height variable (${[...r.lhVars].join("/")}) is not --${T}-line-height. Is that deliberate?`);
+      kinds.push("line-height");
+    }
+    if (diffs.length && !conflicts.length) {
+      out.asks.push(`${names} (--${T}): Figma has ${diffs.join("; ")}. Apply to this project, or keep the template default?`);
+    } else if (diffs.length) {
+      out.asks.push(`${names} (--${T}): Figma differs from base.css — ${diffs.join("; ")}. Resolve the conflict above first.`);
+    }
+    const status = conflicts.length ? `CONFLICT (${conflicts.join(", ")})` : kinds.length ? `DIFFERS (${[...new Set(kinds)].join(", ")})` : "MATCH";
+    table.push([names, figma, base, status, `--${T}-line-height: ${lhNote}`]);
+    weightLines.push(`--${T}  ${names}: Figma ${r.weight}${r.weightName ? ` ${r.weightName}` : ""}, project ${curW?.value ?? "n/a"}${curW?.token ? ` (${curW.token})` : ""} — ${conflicts.includes("weight") ? "CONFLICT" : curW?.value === r.weight ? "match" : "DIFFERS"}`);
+  }
+
+  console.log("FIGMA is weight · letter spacing (em) · line-height variable · text-transform; letter spacing comes from the styles line, never from the px fallbacks in the code.\n");
+  printTable(["STYLE", "FIGMA", "BASE.CSS", "STATUS", "LINE HEIGHT"], table);
+  console.log("\nWEIGHT (every text style, Figma vs project):");
+  for (const l of weightLines) console.log(`  ${l}`);
 }
 
 /* ---------- Figma metadata: layout slicing ---------- */
@@ -1099,8 +1275,6 @@ function runInventory(jsonPath) {
 
   for (const item of design.space ?? []) matchScale(item, isSpace, "space");
 
-  const LETTER_EPS = 0.002; // ±0.002em counts as the same letter spacing
-
   /** letterPx / letterPct on a type entry, as em at each measured breakpoint. */
   function letterEm(item, size) {
     if (item.letterPx !== undefined && item.letterPct !== undefined) fail(`${item.name}: give letterPx or letterPct, not both`);
@@ -1296,17 +1470,21 @@ function scanFolder(dir) {
   let names;
   try {
     names = readdirSync(dir, { withFileTypes: true })
-      .filter((e) => e.isFile() && !e.name.startsWith(".") && !e.name.endsWith(".md"))
+      .filter((e) => e.isFile() && !e.name.startsWith(".") && e.name.toLowerCase() !== "readme.md")
       .map((e) => e.name)
       .sort();
   } catch {
     fail(`FOLDER ${dir}: cannot read the folder — does it exist?`);
   }
-  const found = { variables: [], metadata: [], inventories: [], skipped: [] };
+  const found = { variables: [], metadata: [], designs: [], inventories: [], skipped: [] };
   for (const name of names) {
     const path = join(dir, name);
     const text = readFileSync(path, "utf8").trimStart();
     const skip = (reason) => found.skipped.push({ name, reason });
+    if ((/data-node-id=/.test(text) && /className=/.test(text)) || text.includes("These styles are contained in the design")) {
+      found.designs.push(path);
+      continue;
+    }
     if (text[0] === "{" || text[0] === "[") {
       let data;
       try {
@@ -1336,9 +1514,11 @@ function scanFolder(dir) {
 
 const variableList = flagAll("variables");
 const metadataList = flagAll("metadata");
+const designList = flagAll("design-context");
 const inventoryList = flagAll("json").slice(0, 1);
 if (args.includes("--variables") && !variableList.length) fail("--variables needs one or more files");
 if (args.includes("--metadata") && !metadataList.length) fail("--metadata needs one or more XML files");
+if (args.includes("--design-context") && !designList.length) fail("--design-context needs one or more files");
 if (args.includes("--json") && !inventoryList.length) fail("--json needs a file");
 
 const folder = optionValue("folder", "figma");
@@ -1347,19 +1527,20 @@ let found = null;
 if (folder !== undefined) {
   folderMode = true;
   found = scanFolder(folder);
-  if (!found.count) fail(`FOLDER ${folder.replace(/\/$/, "")}/: no files found — drop a variable export, get_metadata XML or inventory JSON there.`);
+  if (!found.count) fail(`FOLDER ${folder.replace(/\/$/, "")}/: no files found — drop a variable export, get_metadata XML, get_design_context output or inventory JSON there.`);
   variableList.push(...found.variables);
   metadataList.push(...found.metadata);
+  designList.push(...found.designs);
   inventoryList.push(...found.inventories);
 }
 
-if (!variableList.length && !metadataList.length && !inventoryList.length) {
+if (!variableList.length && !metadataList.length && !designList.length && !inventoryList.length) {
   if (found) {
     console.error(`FOLDER ${folder.replace(/\/$/, "")}/: ${found.count} file(s), none recognised.`);
     for (const s of found.skipped) console.error(`  - ${s.name}: ${s.reason}`);
     process.exit(1);
   }
-  fail("need --folder [dir], --json <file>, --variables <file...>, --metadata <file...>, or one of --px / --lh / --color");
+  fail("need --folder [dir], --json <file>, --variables <file...>, --metadata <file...>, --design-context <file...>, or one of --px / --lh / --color");
 }
 
 /* What every mode adds to; printed once at the end, so a folder run asks each question once. */
@@ -1368,13 +1549,18 @@ const heading = (title) => {
   if (folderMode) console.log(`\n=== ${title} ===\n`);
 };
 
+if (folderMode && (variableList.length || metadataList.length) && !designList.length) {
+  out.asks.push("No get_design_context capture in this run, so weight, letter spacing and text-transform per text style were NOT checked. Save get_design_context output (excludeScreenshot true) for each frame into the folder and run again.");
+}
+
 printVersion();
 if (found) {
   const dir = `${folder.replace(/\/$/, "")}/`;
   const listed = (label, paths) => paths.length && console.log(`  ${label}: ${paths.map((p) => p.slice(dir.length)).join(", ")}`);
-  console.log(`FOLDER ${dir}: ${found.variables.length} variable export(s), ${found.metadata.length} metadata, ${found.inventories.length} inventor${found.inventories.length === 1 ? "y" : "ies"}, ${found.skipped.length} skipped`);
+  console.log(`FOLDER ${dir}: ${found.variables.length} variable export(s), ${found.metadata.length} metadata, ${found.designs.length} design context, ${found.inventories.length} inventor${found.inventories.length === 1 ? "y" : "ies"}, ${found.skipped.length} skipped`);
   listed("variable exports", found.variables);
   listed("metadata", found.metadata);
+  listed("design context", found.designs);
   listed("inventories", found.inventories);
   if (found.skipped.length) {
     console.log("SKIPPED (not recognised):");
@@ -1389,6 +1575,10 @@ if (variableList.length) {
 if (metadataList.length) {
   heading(`METADATA (${metadataList.length} file(s))`);
   runMetadata(metadataList);
+}
+if (designList.length) {
+  heading(`DESIGN CONTEXT (${designList.length} file(s))`);
+  runDesignContext(designList);
 }
 for (const file of inventoryList) {
   heading(`INVENTORY ${file}`);

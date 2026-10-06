@@ -158,17 +158,30 @@ is not needed here: slicing only uses the data the tools return.
 1. **Read the file.** Prefer a variable export when there is one: the
    Responsive and Static collections written out as JSON (see step 3). Otherwise
    use the Figma MCP tools — `get_variable_defs` for whatever variables do
-   exist, `get_design_context` for the frame, `get_screenshot` to see what it
-   should look like. Start with the variables: they tell you how much of the
-   system the designer actually used.
+   exist, `get_design_context` for each frame's text styles, `get_screenshot` to
+   see what it should look like. Start with the variables: they tell you how
+   much of the system the designer actually used.
 
 2. **Inventory before converting.** List every distinct spacing value, type
    size with its line height, and color with its opacity, at each breakpoint you
    have. Distinct *values*, not distinct layers — the same 24px appearing eleven
-   times is one value. Read `letterSpacing` (px or %) and text-transform off
-   **every text node** — `get_design_context` or the node data — and attach it
-   to that node's type entry as `letterPx` or `letterPct`; the variable export
-   cannot supply it.
+   times is one value.
+
+   **Text styles come from `get_design_context`.** For each frame (desktop,
+   tablet, mobile) of the page, call `get_design_context` with
+   `excludeScreenshot: true` and save the raw output into `figma/`, for example
+   `about-desktop.txt`, then run `--folder`. Its "These styles are contained in
+   the design" line is the only place that says which text style uses which
+   weight and tracking: variables hold sizes and line heights, not the weight or
+   letter spacing a style applies. The script reads the weight, the letter
+   spacing (a percent: -2.5 means -0.025em) and any `uppercase` from there, and
+   compares them per style with `base.css`. Line height comes from the variable
+   export per breakpoint; the capture only says which variable a style uses. The
+   px fallbacks in the code, such as `var(--line-height\/heading\/h1,60px)`, are
+   desktop-mode values even in the tablet and mobile frames, so they are never
+   used as measurements. **Do not apply or skip these three attributes
+   silently:** report each difference, ask, then edit. A style used with two
+   weights is a conflict to ask about, not to guess.
 
    Leading trim is off by default in this project (opt-in with a `.text-trim`
    class; the `--*-trim-top/bottom` tokens still exist). A Figma text box
@@ -204,9 +217,9 @@ is not needed here: slicing only uses the data the tools return.
    | `font/weight/…` | `--primary-regular` / `-medium` / `-bold`; others reported missing |
    | `font/family/…` | compared with `fonts:` in `astro.config.mjs` and `--primary-family` |
 
-   A variable export does not hold letter spacing or text-transform. The script
-   says so on every `--variables` run; read both off the text nodes instead (see
-   step 2).
+   A variable export does not hold letter spacing, font weight per style or
+   text-transform. The script says so on every `--variables` run; they come
+   from `get_design_context` (see step 2).
 
    **Fonts.** The script also lists which Figma families are configured under
    `fonts:` in `astro.config.mjs` (`--astro-config <file>` to point elsewhere),
@@ -290,7 +303,8 @@ is not needed here: slicing only uses the data the tools return.
    an unreadable body colour is usually the design being messy rather than a
    decision, so raise it with the other questions.
 
-   `type` entries also take `letterPx` or `letterPct`, as a single number or a
+   Without a design-context capture, `type` entries also take `letterPx` or
+   `letterPct`, as a single number or a
    per-breakpoint object like `sizePx`. Pixels are divided by `sizePx` at the
    same breakpoint, percentages by 100, giving em. Letter spacing is **one value
    per style** in `base.css` (`--h1-letter-spacing: var(--letter-spacing-tight)`),
@@ -413,11 +427,22 @@ Close with these lists. Anything empty, say so.
   applied without asking; the user may still want to reverse one.
 - **Contrast** — any pair below its WCAG floor, with the ratio. Flagged, not
   fixed.
+- **Weights** — for every text style, the Figma weight next to the project
+  weight (the ones that match too), and any style used with two weights.
 - **Letter spacing** — each text style whose letter spacing was changed or
   newly added, with the em value and the Figma value it came from.
 - **Fonts** — whether the Figma family and every weight it uses are configured
   under `fonts:` in `astro.config.mjs`, and what is missing.
 - **Still open** — inconsistencies the user has not ruled on yet.
+
+## Checklist before editing base.css
+
+- [ ] Variables compared: every row `match`, `DIFFERS` or `MISSING`, nothing left in an unknown group.
+- [ ] Layout measured: site-margin, gutter and section padding from metadata, outliers looked at.
+- [ ] Text styles compared: weight, letter spacing and line height for every style from `get_design_context`, conflicts asked.
+- [ ] Fonts checked: the family and every weight are configured.
+- [ ] Colors compared: swatches matched, new and themed ones listed.
+- [ ] The consolidated `ASK BEFORE WRITING` list was put to the user and answered.
 
 ## Versions
 

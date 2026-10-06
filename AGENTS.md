@@ -32,6 +32,8 @@ Read [LUMOS.md](LUMOS.md) before adding pages, components, or styles.
 
 ## Skills
 
+**Figma work always goes through `lumos-import-figma` first.** When the user shares a Figma link or node, mentions the `figma/` folder, or asks to slice, implement, build, execute or do the work from a design ("implement", "slice", "kerjakan", "eksekusi", "implementasi", "buat halaman dari figma"), read `.agents/skills/lumos-import-figma/SKILL.md` before anything else and follow it. Do not generate code straight from `get_design_context`, and do not wait for a skill to be named. The skill measures margins, gutters, section padding, line height, letter spacing and font weight; skipping it loses exactly those values.
+
 Task-specific procedures live in `.agents/skills/<name>/SKILL.md`, alongside
 any scripts they need.
 
