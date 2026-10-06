@@ -1,49 +1,49 @@
 # Tutorial: Lumos custom tool (Figma → tokens → site)
 
-Template ini mengubah Lumos for Astro dari skala fluid (`clamp()`) menjadi nilai tetap per breakpoint yang diambil dari Figma, supaya hasilnya bisa dibuat 1:1.
+This template turns Lumos for Astro from a fluid scale (`clamp()`) into fixed values per breakpoint, taken from Figma, so the site can match the design 1:1.
 
-## 1. Konsep singkat
+## 1. Concepts
 
-| Breakpoint | Lebar | Cara kerja |
+| Breakpoint | Width | How it works |
 | --- | --- | --- |
 | mobile | ≤ 767px | default |
 | tablet | 768–991px | `@media (width >= 48rem)` |
 | desktop | ≥ 992px | `@media (width >= 62rem)` |
 
-- Semua token responsif punya tiga angka (px tanpa satuan) di `src/styles/base.css`:
+- Every responsive token has three values (unitless px) in `src/styles/base.css`:
   ```css
   --h1: calc((var(--bp-mobile) * var(--h1-mobile) + var(--bp-tablet) * var(--h1-tablet) + var(--bp-desktop) * var(--h1-desktop)) / 16 * 1rem);
   --h1-mobile: 32;
   --h1-tablet: 45;
   --h1-desktop: 54;
   ```
-  Mengubah desain berarti mengubah angka, bukan rumus.
-- Line height juga tiga angka per breakpoint (`--h1-line-height-mobile/-tablet/-desktop`), bukan rasio.
-- Spacing, radius, dan icon memakai nama Figma: `--space-1-5rem`, `--radius-0-5rem`, `--icon-m`, dan seterusnya. Skala spacing dan padding Figma disatukan.
-- Warna dua lapis: primitif `--color-<grup>-<step>` (palet Figma) lalu semantik di blok tema (`--background`, `--text`, `--brand`).
-- Trim teks mati secara default. Nyalakan dengan class `.text-trim` pada elemen atau induknya.
-- Alat ukurnya: skill `lumos-import-figma` (`.agents/skills/lumos-import-figma/`). Script `convert.mjs` membaca token langsung dari `base.css`, jadi tidak ada salinan yang bisa usang.
+  Changing the design means changing the numbers, never the formula.
+- Line height also has three values per breakpoint (`--h1-line-height-mobile/-tablet/-desktop`), not a ratio.
+- Spacing, radius and icon tokens use Figma's names: `--space-1-5rem`, `--radius-0-5rem`, `--icon-m`, and so on. Figma's spacing and padding scales are merged into one.
+- Colors have two layers: primitives `--color-<group>-<step>` (the Figma palette), then semantic tokens in the theme blocks (`--background`, `--text`, `--brand`).
+- Leading text trim is off by default. Turn it on with the `.text-trim` class on an element or its ancestor.
+- The measuring tool is the `lumos-import-figma` skill (`.agents/skills/lumos-import-figma/`). Its script `convert.mjs` reads tokens straight from `base.css`, so it keeps no copy that can go stale.
 
-## 2. Memulai project dari template
+## 2. Starting a project from the template
 
 ```bash
-gh repo create nama-project --template myuzara02/astro-lumos-custom --clone
-cd nama-project
+gh repo create my-project --template myuzara02/astro-lumos-custom --clone
+cd my-project
 npm install
-npx astro dev --background      # server di background
-npx astro dev status            # lihat port
-npx astro dev stop              # matikan
+npx astro dev --background      # dev server in the background
+npx astro dev status            # see the port
+npx astro dev stop              # stop it
 ```
 
-Atau klik **Use this template** di halaman repo GitHub.
+Or click **Use this template** on the GitHub repo page.
 
-Nilai bawaan template (palet safron-mango, margin 112, dan seterusnya) milik desain asalnya. Langkah berikutnya menggantinya dengan desain Anda.
+The template's defaults (the safron-mango palette, 112px margin, and so on) belong to the design it was built from. The steps below replace them with your own design.
 
-## 3. Menyambungkan Figma ke omp
+## 3. Connecting Figma to omp
 
-1. Buka Figma desktop, buka file desain, masuk **Dev Mode**.
-2. Aktifkan **MCP server** di panel kanan Dev Mode (alamat `http://127.0.0.1:3845/mcp`).
-3. Daftarkan di omp. Tambahkan ke `~/.omp/agent/mcp.json` (berlaku di semua project) atau `.omp/mcp.json` (khusus project):
+1. Open the Figma desktop app, open your design file, and switch to **Dev Mode**.
+2. Enable the **MCP server** in the right-hand panel of Dev Mode (address `http://127.0.0.1:3845/mcp`).
+3. Register it in omp. Add this to `~/.omp/agent/mcp.json` (applies to every project) or `.omp/mcp.json` (this project only):
    ```json
    {
      "mcpServers": {
@@ -51,51 +51,51 @@ Nilai bawaan template (palet safron-mango, margin 112, dan seterusnya) milik des
      }
    }
    ```
-4. Di omp jalankan `/mcp reload`, lalu `/mcp test figma-desktop`. Kalau tool belum muncul, buka sesi baru.
+4. In omp run `/mcp reload`, then `/mcp test figma-desktop`. If the tools do not show up, start a new session.
 
-Catatan: server remote Figma (`mcp.figma.com`) memakai OAuth dan menolak pendaftaran klien omp, jadi pakai server desktop. Figma desktop harus tetap terbuka selama slicing.
+Note: Figma's remote server (`mcp.figma.com`) uses OAuth and rejected omp's client registration, so use the desktop server. The Figma desktop app must stay open while you slice.
 
-## 4. Slicing, urutan kerja
+## 4. Slicing, step by step
 
-Jalankan dari root project. Semua perintah memakai `node .agents/skills/lumos-import-figma/convert.mjs`, disingkat `convert` di bawah.
+Run everything from the project root. All commands use `node .agents/skills/lumos-import-figma/convert.mjs`, shortened to `convert` below.
 
-### 4.1 Variabel Figma → token
+### 4.1 Figma variables → tokens
 
-1. Export koleksi variabel Figma sebagai JSON (mis. `Responsive.json` dengan mode desktop/tablet/mobile, dan `Static.json` untuk warna dan font). Simpan di root project. File ini sengaja di-gitignore.
-2. Jalankan:
+1. Export your Figma variable collections as JSON (for example `Responsive.json` with desktop/tablet/mobile modes, and `Static.json` for colors and fonts). Put them in the project root. They are gitignored on purpose.
+2. Run:
    ```bash
    convert --variables Responsive.json Static.json
    ```
-3. Hasilnya tabel per variabel: `match`, `DIFFERS` (kedua nilai ditampilkan), atau `MISSING`. Bagian `TO UPDATE BY HAND` dan `TO PLACE BY HAND` berisi baris CSS yang harus Anda taruh di `base.css`.
-4. Mode dikenali dari namanya (tidak peka huruf besar, salah ketik `dekstop` ditoleransi). Grup variabel yang tidak dikenal dilaporkan, tidak diabaikan.
-5. Bagian `FONTS` membandingkan font Figma dengan `fonts:` di `astro.config.mjs` (lihat bagian 6).
+3. The output is a table per variable: `match`, `DIFFERS` (both values shown), or `MISSING`. The `TO UPDATE BY HAND` and `TO PLACE BY HAND` sections list the CSS lines to put in `base.css`.
+4. Modes are identified by name (case-insensitive; the typo `dekstop` is tolerated). Unknown variable groups are reported, not ignored.
+5. The `FONTS` section compares Figma's fonts with `fonts:` in `astro.config.mjs` (see section 6).
 
-Skill tidak menulis `base.css`. Anda atau agen menempatkan token sesuai tabel penempatan di `SKILL.md`.
+The skill never writes `base.css`. You (or the agent) place the tokens following the placement table in `SKILL.md`.
 
-### 4.2 Layout: margin, gutter, padding section
+### 4.2 Layout: margin, gutter, section padding
 
-Variabel Figma tidak memuat ini, jadi ukur dari geometri node.
+Figma variables do not hold these, so measure them from node geometry.
 
-1. Minta agen memanggil `get_metadata` untuk node halaman (section Figma yang memuat frame Desktop, Tablet, Mobile), lalu simpan XML-nya, misalnya `page.xml`.
-2. Jalankan:
+1. Ask the agent to call `get_metadata` on the page node (the Figma section that contains the Desktop, Tablet and Mobile frames) and save the XML, for example `page.xml`.
+2. Run:
    ```bash
    convert --metadata page.xml
-   convert --metadata page-a.xml page-b.xml        # beberapa halaman sekaligus
-   convert --metadata page.xml --wrapper 123:456   # bila wrapper tidak terdeteksi
+   convert --metadata page-a.xml page-b.xml        # several pages at once
+   convert --metadata page.xml --wrapper 123:456   # when the wrapper is not detected
    ```
-3. Hasil: `site-margin`, padding section atas dan bawah, `site-gutter` per breakpoint, plus tingkat keyakinan dan outlier. Lalu perbandingan dengan `base.css`: `MATCH`, `DIFFERS`, atau `UNMAPPED`.
-4. Breakpoint dikenali dari lebar frame, bukan nama. Wadah konten dicari dari struktur (anak yang lebih sempit dan terinset), jadi nama `global-wrapper` tidak wajib.
-5. Skill tidak memutuskan padding itu `small`, `medium`, atau `large`. Anda yang memetakan. `Section` memakai `medium` sebagai default.
-6. Hero dan cta sering tidak punya anak di metadata. Bacalah via `get_design_context`. Hati-hati: angka fallback di sana (`var(--padding/4_5rem,72px)`) adalah nilai mode desktop. Geometri metadata yang jadi acuan.
+3. Result: `site-margin`, section padding top and bottom, and `site-gutter` per breakpoint, with confidence levels and outliers, then a comparison with `base.css`: `MATCH`, `DIFFERS` or `UNMAPPED`.
+4. Breakpoints are identified by frame width, not by name. The content container is found by structure (the narrower, inset child), so the name `global-wrapper` is not required.
+5. The skill does not decide whether a padding is `small`, `medium` or `large`. You map it. `Section` uses `medium` by default.
+6. Hero and CTA sections often have no children in the metadata. Read them through `get_design_context`. Be careful: the fallback numbers in its output (`var(--padding/4_5rem,72px)`) are desktop-mode values. The metadata geometry is the source of truth.
 
-Contoh format uji tersedia di `.agents/skills/lumos-import-figma/fixtures/sample-page.xml`:
+A sample input lives at `.agents/skills/lumos-import-figma/fixtures/sample-page.xml`:
 ```bash
 convert --metadata .agents/skills/lumos-import-figma/fixtures/sample-page.xml
 ```
 
-### 4.3 Tipografi dari text node
+### 4.3 Typography from text nodes
 
-Letter spacing dan text-transform tidak ada di variabel, hanya di text node. Kumpulkan per style, lalu masukkan ke JSON:
+Letter spacing and text-transform are not in variables; they live on text nodes. Collect them per style and put them in a JSON file:
 
 ```json
 {
@@ -114,26 +114,26 @@ Letter spacing dan text-transform tidak ada di variabel, hanya di text node. Kum
 convert --json design.json
 ```
 
-Letter spacing disimpan sebagai satu nilai `em` per style. Kalau antar breakpoint berbeda, skill bertanya dan tidak menerapkannya.
+Letter spacing is stored as one `em` value per style. If it differs between breakpoints, the skill asks instead of applying it.
 
-### 4.4 Pencarian cepat
+### 4.4 Quick lookups
 
 ```bash
-convert --px 30                 # snap ke token spacing terdekat (desktop)
+convert --px 30                 # snap to the nearest spacing token (desktop)
 convert --px 30 --bp mobile
-convert --lh 36/32              # line height 36 pada font 32
-convert --color "#FFFFFF@60"    # warna beralpha → color-mix
+convert --lh 36/32              # line height 36 on a 32 font size
+convert --color "#FFFFFF@60"    # color with alpha → color-mix
 ```
 
-## 5. Aturan penting selama slicing
+## 5. Ground rules while slicing
 
-- Skill melaporkan selisih dan bertanya. Ia tidak membuat token baru diam-diam untuk menutupi ketidakkonsistenan desain.
-- Selisih seperti weight H1 Bold di Figma versus Medium di template adalah keputusan per project. Template menyimpan default, dan hasil slicing menimpanya.
-- Nilai yang tidak diukur (mis. tablet saat hanya desktop yang ada) ditandai sebagai tebakan di laporan.
+- The skill reports differences and asks. It never silently creates a new token to cover an inconsistency in the design.
+- Differences such as Figma's Bold H1 versus the template's Medium are per-project decisions. The template keeps its defaults, and slicing overrides them.
+- Values that were not measured (for example tablet when only desktop exists) are marked as guesses in the report.
 
-## 6. Font
+## 6. Fonts
 
-Figma biasanya memakai "Inter Display". Itu Inter pada optical size 32, bukan family terpisah di Google. Template sudah memuatnya:
+Figma usually specifies "Inter Display". That is Inter at optical size 32, not a separate family on Google Fonts. The template already loads it:
 
 ```js
 // astro.config.mjs
@@ -147,32 +147,32 @@ fonts: [{
 }],
 ```
 
-- Font diunduh dari Google saat dev atau build, jadi butuh internet.
-- Untuk font lain, ganti `name`, `weights`, dan `variableAxis`. Untuk font berlisensi, pakai `fontProviders.local()` dengan `variants` per weight.
-- `--variables` memberi tahu bila family atau weight Figma belum dikonfigurasi.
+- The font is downloaded from Google at dev or build time, so it needs an internet connection.
+- For another font, change `name`, `weights` and `variableAxis`. For licensed fonts, use `fontProviders.local()` with a `variants` entry per weight.
+- `--variables` tells you when a Figma family or weight is not configured.
 
-## 7. Memverifikasi hasil
+## 7. Verifying the result
 
-1. Jalankan `npx astro dev --background` dan buka halaman.
-2. Ubah lebar jendela di batas 767/768 dan 991/992px. Nilai harus melompat di titik itu.
-3. Cek tipe: `npx astro check`.
-4. Bandingkan dengan screenshot Figma di tiga lebar (1440, 834, 393). Mismatch biasanya berarti desain tidak konsisten (pertanyaan), bukan bug token.
+1. Run `npx astro dev --background` and open the page.
+2. Resize the window across 767/768px and 991/992px. Values must jump at those points.
+3. Type check: `npx astro check`.
+4. Compare against the Figma screenshots at three widths (1440, 834, 393). A mismatch usually means the design is inconsistent (a question to ask), not a token bug.
 
-## 8. Membangun halaman
+## 8. Building pages
 
-Ikuti `LUMOS.md`: susun dari komponen (`Section`, `ContentWrapper`, `Heading`, `Paragraph`), jangan membuat class baru kecuali tidak ada varian yang cocok. Varian teks yang tersedia: `display`, `h1`–`h6`, `large`, `main`, `small`, `xsmall`, `overline-small`, `overline-main`. Ikon: `small`, `medium`, `large`, `2xs`–`4xl`.
+Follow `LUMOS.md`: compose from components (`Section`, `ContentWrapper`, `Heading`, `Paragraph`) and avoid new classes unless no existing variant fits. Available text variants: `display`, `h1`–`h6`, `large`, `main`, `small`, `xsmall`, `overline-small`, `overline-main`. Icon variants: `small`, `medium`, `large`, `2xs`–`4xl`.
 
-## 9. Memperbarui skill di project lama
+## 9. Updating the skill in older projects
 
-Project dari template adalah salinan. Perubahan template tidak ikut otomatis. Untuk membawa skill terbaru, salin folder `.agents/skills/lumos-import-figma` dari template. Versinya ada di `SKILL_VERSION` pada `convert.mjs`. Untuk framework Lumos sendiri gunakan skill `lumos-upgrade-version`.
+A project made from the template is a copy. Later template changes do not flow in automatically. To bring in the latest skill, copy the `.agents/skills/lumos-import-figma` folder from the template. Its version is `SKILL_VERSION` in `convert.mjs`. For the Lumos framework itself, use the `lumos-upgrade-version` skill.
 
-## 10. Masalah umum
+## 10. Troubleshooting
 
-| Gejala | Penyebab dan solusi |
+| Symptom | Cause and fix |
 | --- | --- |
-| `/mcp reauth` gagal "OAuth authorization failed" | Server remote Figma menolak klien omp. Pakai server desktop (bagian 3). |
-| Tool Figma tidak muncul | Jalankan `/mcp reload`, atau buka sesi baru. Pastikan Figma desktop terbuka dan MCP server aktif. |
-| Heading terlihat Regular, bukan Bold | Weight belum dimuat. Cek `weights` di `astro.config.mjs`. |
-| Padding section tablet tidak cocok dengan variabel | Desainer memasang variabel berbeda per frame. Ukur dari metadata. |
-| `--metadata` melaporkan "not measurable" | Section berupa instance atau tanpa anak. Baca via `get_design_context`. |
-| Teks tombol lebih tinggi dari desain | Trim mati. Memang disengaja, mengikuti line box Figma. Nyalakan dengan `.text-trim` bila perlu. |
+| `/mcp reauth` fails with "OAuth authorization failed" | Figma's remote server rejects omp's client. Use the desktop server (section 3). |
+| Figma tools do not appear | Run `/mcp reload` or start a new session. Make sure Figma desktop is open with the MCP server enabled. |
+| Headings look Regular instead of Bold | The weight is not loaded. Check `weights` in `astro.config.mjs`. |
+| Tablet section padding does not match the variable | The designer bound different variables per frame. Measure from the metadata. |
+| `--metadata` reports "not measurable" | The section is an instance or has no children. Read it through `get_design_context`. |
+| Button text is taller than in the design | Trim is off, by design, to follow Figma's line box. Turn it on with `.text-trim` if needed. |
