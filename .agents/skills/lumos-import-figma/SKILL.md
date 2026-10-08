@@ -32,7 +32,9 @@ with `data-node-id=` and `className=` (or the "These styles are contained in the
 design" line) is a `get_design_context` capture, and a JSON whose keys are all
 inventory keys is an inventory. Anything else, and any invalid JSON, is listed
 under `SKIPPED (not recognised)` rather than failing the run. An empty or
-missing folder exits non-zero.
+missing folder exits non-zero. When the folder holds more than one page, add
+`--page <prefix>` (for example `--page home`): only metadata and design-context
+files whose name starts with the prefix are read, and variable exports are always read.
 
 The agent shows the consolidated report, puts the single `ASK BEFORE WRITING`
 list to the user, and edits `base.css` only after the answers.
@@ -209,19 +211,22 @@ Figma style and a template default is reported and asked about, never applied.
 
    The same captures carry five more things, and the script reads each of them:
 
-   - **Text colours.** Heading styles (`Heading/H*`) set `--heading`, every other
-     text style sets `--text`. The most used colour of each role is compared
-     with the light theme block, followed through `--heading` → `--text` →
-     `--color-*`; the ready line says it must be set in every theme block. Every
-     other text colour (muted label, caption, accent eyebrow) is listed with its
-     node count and closest token, and the question is whether it is a role that
-     deserves a token or a one-off.
+   - **Text colours.** Heading styles (`Heading/H*`) set `--heading`, body text
+     styles set `--text`. Overline and tag styles are labels: they set neither, so
+     a muted or accent label colour cannot outvote the body colour. The most used
+     colour of each of the two roles is compared with the light theme block,
+     followed through `--heading` → `--text` → `--color-*`; the ready line says it
+     must be set in every theme block. Every other text colour, and every label
+     colour, is listed with its node count and closest token, and the question is
+     whether it is a role that deserves a token or a one-off.
    - **Effects.** `shadow-[…]` and `drop-shadow-[…]` classes become the distinct
      shadows with how many nodes use each, matched to the Figma effect styles in
      the styles line (a `drop-shadow` writes half the blur of a box shadow and
      cannot express spread, so the style's own numbers are used when it matches).
-     They print as `--shadow-small|medium|large`, smallest blur first. Figma
-     effect styles are not in a variable export.
+     A shadow equal to a Figma effect style takes that style's name
+     (`Shadow/Small` becomes `--shadow-small`); only shadows with no matching
+     style are named by rank, smallest blur first. Figma effect styles are not in a
+     variable export.
    - **Buttons.** Any node whose `data-name` contains "button" is a row per
      variant: fill, text colour, border, radius, padding, gap and text style.
      Each text variant is compared with the `--button-*` role tokens and the

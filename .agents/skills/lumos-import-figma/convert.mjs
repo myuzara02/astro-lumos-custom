@@ -25,7 +25,7 @@
  *   node convert.mjs --variables Responsive.json Static.json [--css path/to/base.css] [--astro-config path]
  *   node convert.mjs --design-context about-desktop.txt about-tablet.txt
  *   node convert.mjs --summary about-desktop.txt
- *   node convert.mjs --folder [figma]
+ *   node convert.mjs --folder [figma] [--page home]
  *   node convert.mjs --json design.json [--css path/to/base.css]
  *   node convert.mjs --px 30 [--bp tablet|mobile]
  *   node convert.mjs --lh 36/32 [--bp tablet|mobile]
@@ -34,11 +34,11 @@
  */
 
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 /* Moves independently of the framework: a skill fix does not need a release,
    and a release does not invalidate the skill. */
-const SKILL_VERSION = "2.1.0";
+const SKILL_VERSION = "2.2.0";
 /* A pin, not a mirror: the release this skill was last checked against.
    Deriving it from package.json would make it always equal to the running
    version, and the mismatch note would never fire. */
@@ -892,7 +892,7 @@ function runDesignContext(files) {
   }
 
   /* The code carries the variable names and is the only place text-transform and colours show up. Its px fallbacks are desktop-mode values and are ignored. */
-  const colors = { heading: new Map(), text: new Map() };
+  const colors = { heading: new Map(), text: new Map(), label: new Map() };
   const textNodes = caps.flatMap((c) => c.nodes.map((n) => ({ n, c, t: n.text ? textOf(n) : null })).filter((x) => x.t));
   for (const { n, t } of textNodes) {
     const row = ensure(t.sizeVar, t.weight, t.weightName);
@@ -902,7 +902,8 @@ function runDesignContext(files) {
     row.transforms.add(t.transform);
     if (t.lh) row.lhVars.add(t.lh);
     if (inButton || !t.color) continue;
-    const role = /^font-size\/heading\//i.test(t.sizeVar) ? "heading" : "text";
+    /* Overline and tag styles are labels: a muted or accent label colour must not outvote the body colour for --text. */
+    const role = /^font-size\/heading\//i.test(t.sizeVar) ? "heading" : /^font-size\/overline\//i.test(t.sizeVar) ? "label" : "text";
     const key = colorLabel(t.color);
     const entry = colors[role].get(key) ?? { color: t.color, count: 0, styles: new Map() };
     entry.count++;
@@ -1047,10 +1048,11 @@ function runDesignContext(files) {
 
   /* ---- text colours ---- */
   const dominant = (m) => [...m.values()].sort((a, b) => b.count - a.count)[0];
-  if (colors.heading.size || colors.text.size) {
-    console.log("\nTEXT COLOURS (heading styles set --heading, every other text style sets --text; light theme resolved):");
+  if (colors.heading.size || colors.text.size || colors.label.size) {
+    console.log("\nTEXT COLOURS (heading styles set --heading, body styles set --text, overline and tag styles are labels and set neither; light theme resolved):");
     const colorRows = [];
     for (const [role, entries] of Object.entries(colors)) {
+      if (role === "label") continue;
       const top = dominant(entries);
       if (!top) continue;
       const cur = resolveVar(`--${role}`);
@@ -1065,7 +1067,7 @@ function runDesignContext(files) {
     printTable(["ROLE", "FIGMA (most used)", "BASE.CSS (light)", "STATUS"], colorRows);
     const others = [];
     for (const [role, entries] of Object.entries(colors)) {
-      const top = dominant(entries);
+      const top = role === "label" ? null : dominant(entries);
       for (const e of entries.values()) {
         if (e === top) continue;
         const near = e.color.token ? { name: e.color.token, d: 0 } : e.color.hex ? nearestSwatch(e.color.hex, tokens.swatches) : null;
@@ -1104,9 +1106,14 @@ function runDesignContext(files) {
     const reach = (s) => Math.max(...s.layers.map((l) => Math.abs(l.y)));
     const ranked = [...shadows.values()].sort((a, b) => blur(a) - blur(b) || reach(a) - reach(b));
     const SCALE = ranked.length === 1 ? ["medium"] : ranked.length === 2 ? ["small", "large"] : ["small", "medium", "large", "xlarge", "2xlarge"];
+    /* A shadow equal to a Figma effect style takes that style's name (Shadow/Small -> shadow-small); only the rest are named by rank. */
+    const styleToken = (s) => (s.effect ? `shadow-${s.effect.replace(/^.*\//, "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}` : null);
+    const taken = new Set(ranked.map(styleToken).filter(Boolean));
+    const rankFree = SCALE.map((n) => `shadow-${n}`).filter((n) => !taken.has(n));
     const shadowRows = [];
+    let rankAt = 0;
     ranked.forEach((s, i) => {
-      s.token = `shadow-${SCALE[i] ?? `${i + 1}`}`;
+      s.token = styleToken(s) ?? rankFree[rankAt++] ?? `shadow-${i + 1}`;
       const existing = css.match(new RegExp(`--${s.token}:\\s*([^;]+);`))?.[1];
       shadowRows.push([s.token, `${s.nodes}`, [...s.names].slice(0, 3).join(", "), s.effect ? `= Figma ${s.effect}${s.drop ? " (code uses drop-shadow)" : ""}` : `no equal Figma effect style${s.drop ? " (drop-shadow, spread unknown)" : ""}`, existing ? "already in base.css — compare by hand" : "NEW"]);
       out.places.push({ name: s.token, value: shadowCss(s.layers) });
@@ -2061,6 +2068,14 @@ if (folder !== undefined) {
   folderMode = true;
   found = scanFolder(folder);
   if (!found.count) fail(`FOLDER ${folder.replace(/\/$/, "")}/: no files found — drop a variable export, get_metadata XML, get_design_context output or inventory JSON there.`);
+  const page = optionValue("page", undefined);
+  if (page) {
+    const ofPage = (p) => basename(p).toLowerCase().startsWith(page.toLowerCase());
+    for (const key of ["metadata", "designs"]) {
+      found.skipped.push(...found[key].filter((p) => !ofPage(p)).map((p) => ({ name: basename(p), reason: `not page "${page}" (file name must start with it)` })));
+      found[key] = found[key].filter(ofPage);
+    }
+  }
   variableList.push(...found.variables);
   metadataList.push(...found.metadata);
   designList.push(...found.designs);
