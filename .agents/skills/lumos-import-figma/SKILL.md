@@ -207,7 +207,13 @@ Figma style and a template default is reported and asked about, never applied.
    desktop-mode values even in the tablet and mobile frames, so they are never
    used as measurements. **Do not apply or skip these three attributes
    silently:** report each difference, ask, then edit. A style used with two
-   weights is a conflict to ask about, not to guess.
+   weights is a conflict to ask about, not to guess — unless the project already
+   settled it: when `base.css` holds one of the weights as the style's default
+   and `utilities.css` has a `.weight-*` class for every other one, the report
+   lists it under `MINORITY WEIGHTS ALREADY COVERED` and asks nothing. The
+   majority is the default; minorities use the existing class on the instance.
+   With several pages in the folder, each weight is shown with the pages that
+   use it, so a page that contradicts an earlier one is visible.
 
    The same captures carry five more things, and the script reads each of them:
 
@@ -229,9 +235,16 @@ Figma style and a template default is reported and asked about, never applied.
      variable export.
    - **Buttons.** Any node whose `data-name` contains "button" is a row per
      variant: fill, text colour, border, radius, padding, gap and text style.
-     Each text variant is compared with the `--button-*` role tokens and the
-     `--button-*` theme colours in the light theme, with a ready line per
-     difference. The primary variant is the user's choice; nothing is applied.
+     Each text variant is compared with the project's `Button.astro`: every size
+     class it defines (`&.small { --button-*: … }`), primary and secondary
+     emphasis, and the link variant, in every theme block. A variant that equals
+     one is `COVERED` with the props to use (`emphasis="secondary" size="small"
+     in dark theme`); only `NEW` variants are asked about, with what differs
+     from the closest configuration. A local override inside a component (a nav
+     setting its own `--button-2-*`) is invisible to the script and shows as
+     `NEW`. When nothing matches yet — a fresh project — the variants are
+     compared with the `--button-*` role tokens instead, and the primary variant
+     is the user's choice; nothing is applied.
    - **Assets.** Every `http://localhost:3845/assets/<hash>.<ext>` becomes a row
      with the node that uses it and a ready `curl -o src/assets/<page>/<name>.<ext>`
      line. The script makes no network request. Downscale photos, and rebuild

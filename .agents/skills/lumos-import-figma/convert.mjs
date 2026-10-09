@@ -84,12 +84,12 @@ function readTokens(css) {
   }
 
   const lineHeights = {};
-  for (const m of css.matchAll(/--line-height-([a-z]+):\s*([\d.]+)/g)) {
+  for (const m of css.matchAll(/--line-height-([a-z0-9-]+):\s*([\d.]+)\s*;/g)) {
     lineHeights[`--line-height-${m[1]}`] = Number(m[2]);
   }
 
   const letterSpacing = {};
-  for (const m of css.matchAll(/--letter-spacing-([a-z]+):\s*(-?[\d.]+)em/g)) {
+  for (const m of css.matchAll(/--letter-spacing-([a-z0-9-]+):\s*(-?[\d.]+)em/g)) {
     letterSpacing[`--letter-spacing-${m[1]}`] = Number(m[2]);
   }
 
@@ -110,7 +110,7 @@ function readTokens(css) {
 
   /* What each style's --X-letter-spacing resolves to, through the --letter-spacing-* tokens. */
   const styleLetter = {};
-  for (const m of css.matchAll(/--([a-z0-9-]+)-letter-spacing:\s*(?:var\((--letter-spacing-[a-z]+)\)|(-?[\d.]+)em)/g)) {
+  for (const m of css.matchAll(/--([a-z0-9-]+)-letter-spacing:\s*(?:var\((--letter-spacing-[a-z0-9-]+)\)|(-?[\d.]+)em)/g)) {
     styleLetter[m[1]] = { token: m[2] ?? null, em: m[2] ? letterSpacing[m[2]] : Number(m[3]) };
   }
 
@@ -326,6 +326,17 @@ const triple = (n, v) => responsive(n, v).slice(1);
 
 const css = readFileSync(cssPath, "utf8");
 const tokens = readTokens(css);
+/* utilities.css beside base.css: which .weight-* classes the project already has for minority weights. */
+const utilitiesCss = (() => {
+  try {
+    return readFileSync(join(cssPath, "..", "utilities.css"), "utf8");
+  } catch {
+    return "";
+  }
+})();
+const hasWeightUtility = (w) => Boolean(WEIGHT_UTILITY[w]) && new RegExp(`^\\.weight-${WEIGHT_UTILITY[w]}\\s*\\{`, "m").test(utilitiesCss);
+/** A style used with several weights needs no question when base.css already holds one of them and a .weight-* utility exists for every other. */
+const weightsCovered = (def, seen) => def !== undefined && seen.includes(def) && seen.every((w) => w === def || hasWeightUtility(w));
 
 const bp = flag("bp") ?? "desktop";
 if (!BPS.includes(bp)) fail(`--bp must be one of: ${BPS.join(", ")}`);
@@ -861,6 +872,118 @@ function resolveVar(name) {
   }
   return { name: cur, via, value: null };
 }
+
+/** The theme blocks of base.css by name: light (:root), dark and brand, each as its own variable map. */
+function themeBlocks() {
+  const blocks = { light: tokens.themeLight };
+  for (const [name, re] of [["dark", /(?:^|\n)(\.theme-dark,[^{]*)\{([^}]*)\}/], ["brand", /(?:^|\n)(\.theme-brand\s*)\{([^}]*)\}/]]) {
+    const m = css.match(re);
+    if (m) blocks[name] = Object.fromEntries([...m[2].matchAll(/(--[a-z0-9-]+):\s*([^;]+);/g)].map((x) => [x[1], x[2].trim()]));
+  }
+  return blocks;
+}
+
+/** A variable followed through var() in one theme (then :root) to the swatch or literal it ends at. */
+function resolveIn(name, vars) {
+  let cur = name;
+  for (let i = 0; i < 10; i++) {
+    const v = vars[cur] ?? tokens.themeLight[cur] ?? tokens.rootVars[cur];
+    if (v === undefined) return { token: null, value: null };
+    const m = v.match(/^var\((--[a-z0-9-]+)(?:,[^)]*)?\)$/);
+    if (!m) return { token: tokens.swatches[cur] ? cur : null, value: v };
+    cur = m[1];
+  }
+  return { token: null, value: null };
+}
+
+/**
+ * The project's Button as concrete configurations: every size class in Button.astro that overrides
+ * --button-* sizes (`&.small { … }`), crossed with primary/secondary emphasis and each theme.
+ * Null when the component cannot be read.
+ */
+function buttonConfigs() {
+  let src;
+  try {
+    src = readFileSync(join(cssPath, "..", "..", "components", "Button.astro"), "utf8");
+  } catch {
+    return null;
+  }
+  const SIZE_VARS = /(--button-(?:radius|padding-block|padding-inline|gap|font-size|font-weight|line-height|letter-spacing|border-inset)):\s*([^;]+);/g;
+  const sizes = { main: {} };
+  for (const m of src.matchAll(/&\.([a-z0-9-]+)\s*\{([^{}]*)\}/g)) {
+    const decl = Object.fromEntries([...m[2].matchAll(SIZE_VARS)].map((x) => [x[1], x[2].trim()]));
+    if (Object.keys(decl).length) sizes[m[1]] = decl;
+  }
+  const configs = [];
+  /* The link variant draws no box: only its weight (from `&.link { font-weight }`) and --link-text matter. */
+  const linkWeightRef = src.match(/&\.link\s*\{[^}]*?font-weight:\s*var\((--primary-[a-z]+)\)/)?.[1];
+  for (const [theme, vars] of Object.entries(themeBlocks())) {
+    if (/&\.link\s*\{/.test(src)) {
+      const fontToken = tokens.rootVars["--button-font-size"]?.match(/^var\(--([a-z0-9-]+)\)$/)?.[1] ?? null;
+      configs.push({
+        theme, emphasis: "link", size: "main", props: 'variant="link"',
+        radius: null, padY: 0, padX: 0, font: fontToken,
+        weight: linkWeightRef ? tokens.weights[linkWeightRef] : null,
+        fill: { token: null, value: "transparent" }, text: resolveIn("--link-text", vars), border: { token: null, value: null },
+      });
+    }
+    for (const emphasis of ["primary", "secondary"]) {
+      for (const [size, over] of Object.entries(sizes)) {
+        const v = (name) => over[name] ?? tokens.rootVars[name];
+        const colour = (role) => resolveIn(emphasis === "secondary" ? role.replace("--button-", "--button-2-") : role, vars);
+        const fontToken = v("--button-font-size")?.match(/^var\(--([a-z0-9-]+)\)$/)?.[1] ?? null;
+        const fontPx = fontToken ? tokens.scale[fontToken]?.desktop : null;
+        const weightRef = v("--button-font-weight")?.match(/^var\((--primary-[a-z]+)\)$/)?.[1];
+        configs.push({
+          theme, emphasis, size,
+          props: [emphasis !== "primary" && `emphasis="${emphasis}"`, size !== "main" && `size="${size}"`].filter(Boolean).join(" ") || "(default)",
+          radius: projectPx(v("--button-radius"), fontPx),
+          padY: projectPx(v("--button-padding-block"), fontPx),
+          padX: projectPx(v("--button-padding-inline"), fontPx),
+          font: fontToken,
+          weight: weightRef ? tokens.weights[weightRef] : Number(v("--button-font-weight")) || null,
+          fill: colour("--button-background"),
+          text: colour("--button-text"),
+          border: colour("--button-border"),
+        });
+      }
+    }
+  }
+  return configs;
+}
+
+/** Where a Figma text button differs from one Button configuration; an empty list is a match. */
+function buttonDiff(s, c) {
+  const diffs = [];
+  const num = (what, figma, project) => {
+    if (figma === undefined || figma === null) return;
+    if (project === null || Math.abs(figma - project) > 0.5) diffs.push(`${what} ${figma} vs ${project ?? "?"}`);
+  };
+  num("radius", s.radius?.px, c.radius);
+  num("padding-y", s.padY?.px, c.padY);
+  num("padding-x", s.padX?.px, c.padX);
+  const font = s.style ? tokenFor(s.style.sizeVar)?.token : null;
+  if (font && font !== c.font) diffs.push(`font ${font} vs ${c.font ?? "?"}`);
+  if (s.style && c.weight && s.style.weight !== c.weight) diffs.push(`weight ${s.style.weight} vs ${c.weight}`);
+  const colour = (what, figma, project) => {
+    const figmaToken = figma?.token ?? null;
+    const clear = (x) => !x || x.value === "transparent";
+    if (!figma) {
+      if (!clear(project) && project.token) diffs.push(`${what} none vs ${project.token}`);
+      return;
+    }
+    if (!figmaToken) return;
+    if (!project?.token) {
+      if (project?.value) diffs.push(`${what} ${figmaToken} vs ${project.value}`);
+      return;
+    }
+    if (figmaToken !== project.token) diffs.push(`${what} ${figmaToken} vs ${project.token}`);
+  };
+  colour("fill", s.fill, c.fill);
+  colour("text", s.text, c.text);
+  if (s.border) colour("border", s.border.color, c.border);
+  return diffs;
+}
 /** Project value of a `--button-*` size token as px, given the button's font size. Null when it is not a length. */
 function projectPx(value, fontPx) {
   let m;
@@ -879,7 +1002,7 @@ function runDesignContext(files) {
   const ensure = (sizeVar, weight, name) => {
     const key = `${sizeVar.toLowerCase()}|${weight}`;
     if (!rows.has(key)) {
-      rows.set(key, { sizeVar, weight, weightName: name, styles: new Set(), lhVars: new Set(), letters: new Set(), transforms: new Set(), nodes: 0, buttonNodes: 0 });
+      rows.set(key, { sizeVar, weight, weightName: name, styles: new Set(), lhVars: new Set(), letters: new Set(), transforms: new Set(), nodes: 0, buttonNodes: 0, pages: new Map() });
     }
     return rows.get(key);
   };
@@ -894,11 +1017,14 @@ function runDesignContext(files) {
   /* The code carries the variable names and is the only place text-transform and colours show up. Its px fallbacks are desktop-mode values and are ignored. */
   const colors = { heading: new Map(), text: new Map(), label: new Map() };
   const textNodes = caps.flatMap((c) => c.nodes.map((n) => ({ n, c, t: n.text ? textOf(n) : null })).filter((x) => x.t));
-  for (const { n, t } of textNodes) {
+  for (const { n, c, t } of textNodes) {
     const row = ensure(t.sizeVar, t.weight, t.weightName);
     const inButton = Boolean(buttonOf(n));
     if (inButton) row.buttonNodes++;
-    else row.nodes++;
+    else {
+      row.nodes++;
+      row.pages.set(c.page, (row.pages.get(c.page) ?? 0) + 1);
+    }
     row.transforms.add(t.transform);
     if (t.lh) row.lhVars.add(t.lh);
     if (inButton || !t.color) continue;
@@ -958,12 +1084,12 @@ function runDesignContext(files) {
     const weightsSeen = [...new Set(group.map((x) => x.weight))];
     const lettersSeen = group.flatMap((x) => [...x.letters]);
     const conflicts = [];
-    if (weightsSeen.length > 1) conflicts.push("weight");
+    if (weightsSeen.length > 1 && !weightsCovered(curW?.value, weightsSeen)) conflicts.push("weight");
     if (spreadEm(lettersSeen)) conflicts.push("letter-spacing");
     if (transform === "mixed") conflicts.push("text-transform");
 
     const kinds = [];
-    if (curW?.value !== r.weight) kinds.push("weight");
+    if (curW?.value !== r.weight && !(weightsSeen.length > 1 && weightsCovered(curW?.value, weightsSeen))) kinds.push("weight");
     if (letters.length === 1 && Math.abs((curL?.em ?? 0) - em(letters[0])) > LETTER_EPS) kinds.push("letter-spacing");
     if (transform && transform !== "mixed" && (curT ?? "none") !== transform) kinds.push("text-transform");
 
@@ -976,12 +1102,14 @@ function runDesignContext(files) {
       out.asks.push(`${names}: its line height variable (${[...r.lhVars].join("/")}) is not --${T}-line-height. Is that deliberate?`);
       kinds.push("line-height");
     }
-    const status = conflicts.length ? `CONFLICT (${conflicts.join(", ")})` : kinds.length ? `DIFFERS (${[...new Set(kinds)].join(", ")})` : "MATCH";
+    const viaUtility = curW?.value !== r.weight && hasWeightUtility(r.weight) && weightsCovered(curW?.value, weightsSeen);
+    const status = conflicts.length ? `CONFLICT (${conflicts.join(", ")})` : kinds.length ? `DIFFERS (${[...new Set(kinds)].join(", ")})` : viaUtility ? `MATCH via .weight-${WEIGHT_UTILITY[r.weight]}` : "MATCH";
     table.push([names, figma, base, status, `--${T}-line-height: ${lhNote}`]);
-    weightLines.push(`--${T}  ${names}: Figma ${r.weight}${r.weightName ? ` ${r.weightName}` : ""}, project ${curW?.value ?? "n/a"}${curW?.token ? ` (${curW.token})` : ""} — ${conflicts.includes("weight") ? "CONFLICT" : curW?.value === r.weight ? "match" : "DIFFERS"}`);
+    weightLines.push(`--${T}  ${names}: Figma ${r.weight}${r.weightName ? ` ${r.weightName}` : ""}, project ${curW?.value ?? "n/a"}${curW?.token ? ` (${curW.token})` : ""} — ${conflicts.includes("weight") ? "CONFLICT" : curW?.value === r.weight ? "match" : viaUtility ? `match via .weight-${WEIGHT_UTILITY[r.weight]}` : "DIFFERS"}`);
   }
 
   /* One question and one set of update lines per text token, however many styles share it. */
+  const covered = [];
   for (const [T, group] of byToken) {
     if (!tokens.scale[T]) continue;
     const curW = tokens.styleWeight[T];
@@ -994,10 +1122,20 @@ function runDesignContext(files) {
     const issues = [];
     let conflict = false;
     if (weightsSeen.length > 1) {
-      conflict = true;
-      const counts = weightsSeen.map((w) => ({ w, n: group.filter((r) => r.weight === w).reduce((a, r) => a + r.nodes, 0), names: [...new Set(group.filter((r) => r.weight === w).flatMap((r) => [...r.styles]))].join(", ") }));
-      const top = [...counts].sort((a, b) => b.n - a.n)[0].w;
-      issues.push(`used with weights ${counts.map((c) => `${c.w} ×${c.n} node(s) (${c.names || "unnamed"})`).join(" and ")}, but base.css has one value per style (weight ${curW?.value ?? "n/a"}). Suggest the most used (${top}) as the default and the rest as .weight-${weightsSeen.filter((w) => w !== top).map((w) => WEIGHT_UTILITY[w] ?? w).join(" / .weight-")}`);
+      const counts = weightsSeen.map((w) => {
+        const rs = group.filter((r) => r.weight === w);
+        const pages = new Map();
+        for (const r of rs) for (const [p, n] of r.pages) pages.set(p, (pages.get(p) ?? 0) + n);
+        return { w, n: rs.reduce((a, r) => a + r.nodes, 0), names: [...new Set(rs.flatMap((r) => [...r.styles]))].join(", "), pages: [...pages].map(([p, n]) => `${p} ×${n}`).join(", ") };
+      });
+      const minority = weightsSeen.filter((w) => w !== curW?.value);
+      if (weightsCovered(curW?.value, weightsSeen)) {
+        covered.push(`--${T}: default ${curW.value} (base.css); ${minority.map((w) => `${w} → .weight-${WEIGHT_UTILITY[w]}`).join(", ")} (utilities.css). Nothing to ask.`);
+      } else {
+        conflict = true;
+        const top = [...counts].sort((a, b) => b.n - a.n)[0].w;
+        issues.push(`used with weights ${counts.map((c) => `${c.w} ×${c.n} node(s) (${c.names || "unnamed"}${c.pages ? `; ${c.pages}` : ""})`).join(" and ")}, but base.css has one value per style (weight ${curW?.value ?? "n/a"}). Suggest the most used (${top}) as the default and the rest as .weight-${weightsSeen.filter((w) => w !== top).map((w) => WEIGHT_UTILITY[w] ?? w).join(" / .weight-")}`);
+      }
     } else if (curW?.value !== weightsSeen[0]) {
       issues.push(`weight ${weightsSeen[0]} vs project ${curW?.value ?? "n/a"}${curW?.token ? ` (${curW.token})` : ""}`);
       let ref = Object.entries(tokens.weights).find(([, v]) => v === weightsSeen[0])?.[0];
@@ -1044,6 +1182,10 @@ function runDesignContext(files) {
     printTable(["STYLE", "FIGMA", "BASE.CSS", "STATUS", "LINE HEIGHT"], table);
     console.log("\nWEIGHT (every text style, Figma vs project):");
     for (const l of weightLines) console.log(`  ${l}`);
+    if (covered.length) {
+      console.log("\nMINORITY WEIGHTS ALREADY COVERED (default in base.css, the rest by existing utilities):");
+      for (const l of covered) console.log(`  ${l}`);
+    }
   }
 
   /* ---- text colours ---- */
@@ -1199,13 +1341,34 @@ function runDesignContext(files) {
       theme("--button-text", s.text, "text");
       if (s.border) theme("--button-border", s.border.color, "border");
     }
-    if (lines.length) {
+    /* Against the project's Button: a Figma variant that equals an existing configuration in some theme needs no question. */
+    const configs = buttonConfigs() ?? [];
+    const verdicts = textVariants.map((v) => {
+      const best = configs.map((c) => ({ c, d: buttonDiff(v.spec, c) })).sort((a, b) => a.d.length - b.d.length)[0];
+      return { v, best };
+    });
+    const primaryCovered = configs.length > 0 && verdicts.some(({ best }) => !best.d.length);
+    if (verdicts.length && configs.length) {
+      console.log("\nBUTTON VARIANTS vs Button.astro (each Figma text variant against every size class × emphasis × theme the project has):");
+      printTable(["VARIANT", "STATUS", "CLOSEST <Button>", "DIFFERS"], verdicts.map(({ v, best }) => [
+        `${v.label} ×${v.count}`,
+        best.d.length ? "NEW" : "COVERED",
+        `${best.c.props} in ${best.c.theme} theme`,
+        best.d.join("; ") || "—",
+      ]));
+    }
+    if (lines.length && !primaryCovered) {
       console.log("\nBUTTON TOKENS vs base.css (px: Figma desktop values; em in base.css taken at the button's own font size; button tokens are single values, so tablet and mobile are not compared):");
       printTable(["VARIANT", "TOKEN", "FIGMA", "BASE.CSS", "STATUS", "READY LINE"], lines);
     }
     console.log("  Strokes sit INSIDE the box in Figma and Lumos is border-box: the padding above already includes the border. Set --button-border-inset to the border width instead of adding size.");
-    const names = [...new Set(buttonRows.map((r) => r[0]))].join("; ");
-    out.asks.push(`Buttons: ${buttonRows.length} variant(s) — ${names}. Which is the primary one that --button-* should describe? Nothing was applied.`);
+    if (primaryCovered) {
+      const fresh = verdicts.filter(({ best }) => best.d.length);
+      if (fresh.length) out.asks.push(`Buttons: ${fresh.map(({ v, best }) => `${v.label} ×${v.count} (closest ${best.c.props} in ${best.c.theme} theme; ${best.d.join(", ")})`).join("; ")} match no existing Button configuration. For each: a new size/variant in Button.astro, a theme override, or a one-off?`);
+    } else {
+      const names = [...new Set(buttonRows.map((r) => r[0]))].join("; ");
+      out.asks.push(`Buttons: ${buttonRows.length} variant(s) — ${names}. Which is the primary one that --button-* should describe? Nothing was applied.`);
+    }
   }
 
   /* ---- assets ---- */
