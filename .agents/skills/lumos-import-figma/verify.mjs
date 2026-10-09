@@ -384,10 +384,23 @@ function pageProbe(selector) {
   const box = (el) => {
     const s = cs(el);
     const r = el.getBoundingClientRect();
-    if (s.display === "inline") {
+    const iconBeside = Boolean(el.querySelector(":scope > svg, :scope > img"));
+    if (s.display === "inline" || iconBeside) {
       const rg = document.createRange();
-      rg.selectNodeContents(el);
-      const rs = [...rg.getClientRects()].filter((q) => q.width > 0);
+      let rs;
+      if (iconBeside) {
+        /* An icon inside the element is not part of the text Figma measured: use the text nodes alone. */
+        rs = [];
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          if (!n.textContent.trim()) continue;
+          rg.selectNodeContents(n);
+          rs.push(...[...rg.getClientRects()].filter((q) => q.width > 0));
+        }
+      } else {
+        rg.selectNodeContents(el);
+        rs = [...rg.getClientRects()].filter((q) => q.width > 0);
+      }
       if (!rs.length) return null;
       const left = Math.min(...rs.map((q) => q.left));
       const right = Math.max(...rs.map((q) => q.right));
