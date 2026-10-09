@@ -569,6 +569,18 @@ Figma style and a template default is reported and asked about, never applied.
    also writes `<page>-<bp>-diff.png` (red where the pixels differ) and the
    mismatch percentage per section.
 
+   No export is needed when Figma desktop has the file open: the script asks
+   Figma's Dev Mode MCP server (`127.0.0.1:3845`) for a screenshot of every
+   section and writes `figma/shots/<page>-<bp>-<nn>-<section>.png` with three
+   panels, Figma | web | red diff, plus a mismatch percentage per section. The
+   web panel is cropped at the DOM section's own position, so a section is
+   compared with itself even when the page above it has drifted. Figma caps a
+   screenshot at 1024px on its long side, so tall mobile sections are compared
+   at a reduced scale. Text edges always show some red (font rendering differs);
+   look for red shapes instead: a different icon, an image cropped or covered,
+   a line that wraps differently, a block that is missing. These are exactly the
+   faults the text measurements cannot see. `--no-figma` skips it.
+
    Read the deltas as a list of causes, not as noise. A whole section shifted by
    the same amount usually has one cause: a heading or paragraph margin the type
    style adds (`.heading` and `.text` carry `margin-top`; reset it inside a

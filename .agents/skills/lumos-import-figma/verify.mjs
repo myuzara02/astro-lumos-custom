@@ -47,6 +47,15 @@
  *                the web shot is scaled to its width, a diff image is written next
  *                to it, and the mismatch is printed per section band.
  *
+ *   SECTION DIFF With Figma desktop open on the file (its Dev Mode MCP server on
+ *                127.0.0.1:3845), each Figma section is captured with get_screenshot
+ *                and compared with its paired DOM section, cropped from the web shot
+ *                at the DOM's own position, so drift above it does not shift the
+ *                comparison. Writes <page>-<bp>-<nn>-<section>.png: Figma | web |
+ *                diff side by side, red where they differ. Figma caps a screenshot
+ *                at 1024px on its long side, so the comparison runs at that scale.
+ *                `--no-figma` skips it.
+ *
  * The page runs with prefers-reduced-motion: reduce so scroll-reveal transforms do
  * not move boxes, and the Astro dev toolbar is hidden.
  *
@@ -54,6 +63,7 @@
  *   node verify.mjs --url http://localhost:4321/ --page home [--folder figma]
  *                   [--tolerance 1] [--chrome <path>] [--sections "<css>"]
  *                   [--threshold 32]   # per-channel colour difference that counts as a mismatch
+ *                   [--no-figma]       # skip fetching section screenshots from Figma desktop
  *
  * Input files (in --folder): <page>-metadata.xml and <page>-<desktop|tablet|mobile>-context.txt,
  * the same ones `convert.mjs --folder` reads.
@@ -82,6 +92,8 @@ const folder = flag("folder") ?? "figma";
 const tolerance = Number(flag("tolerance") ?? 1);
 const pixelThreshold = Number(flag("threshold") ?? 32);
 const sectionSelector = flag("sections");
+const useFigma = !args.includes("--no-figma");
+const FIGMA_MCP = "http://127.0.0.1:3845/mcp";
 if (!Number.isFinite(tolerance) || !Number.isFinite(pixelThreshold)) fail("--tolerance and --threshold must be numbers");
 
 /* ---------- small helpers ---------- */
@@ -103,6 +115,74 @@ const printTable = (head, body, indent = "") => {
   for (const r of body) console.log(row(r));
 };
 
+
+/* ---------- Figma desktop: screenshots over its Dev Mode MCP server ---------- */
+
+/** A minimal MCP client over Streamable HTTP; null when Figma desktop is not running. */
+async function figmaClient() {
+  const headers = { "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
+  const read = async (res) => {
+    const text = await res.text();
+    const events = text.split("\n").filter((l) => l.startsWith("data:")).map((l) => JSON.parse(l.slice(5)));
+    return events.at(-1) ?? (text ? JSON.parse(text) : null);
+  };
+  let res;
+  try {
+    res = await fetch(FIGMA_MCP, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "lumos-verify", version: "1" } } }) });
+  } catch {
+    return null;
+  }
+  if (!res.ok) return null;
+  const session = res.headers.get("mcp-session-id");
+  await read(res);
+  const h = { ...headers, ...(session ? { "mcp-session-id": session } : {}) };
+  await fetch(FIGMA_MCP, { method: "POST", headers: h, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
+  let id = 2;
+  return {
+    /** PNG bytes of a node, or null with the reason. */
+    async screenshot(nodeId) {
+      const r = await fetch(FIGMA_MCP, { method: "POST", headers: h, body: JSON.stringify({ jsonrpc: "2.0", id: id++, method: "tools/call", params: { name: "get_screenshot", arguments: { nodeId } } }) });
+      const msg = await read(r);
+      const img = msg?.result?.content?.find((c) => c.type === "image");
+      if (img) return { png: Buffer.from(img.data, "base64") };
+      return { error: msg?.result?.content?.find((c) => c.type === "text")?.text ?? msg?.error?.message ?? "no image" };
+    },
+  };
+}
+
+/** Figma | web | diff for one section, and the share of pixels that differ. */
+async function sectionDiff(sharp, figmaPng, webPng, dom, outPng) {
+  const fig = sharp(figmaPng).flatten({ background: "#ffffff" }).removeAlpha();
+  const { width: fw, height: fh } = await fig.metadata();
+  const web = await sharp(webPng);
+  const meta = await web.metadata();
+  const top = Math.max(0, Math.round(dom.y));
+  const h = Math.max(1, Math.min(Math.round(dom.h), meta.height - top));
+  const crop = await sharp(webPng).extract({ left: 0, top, width: meta.width, height: h }).resize({ width: fw, height: fh, fit: "fill" }).flatten({ background: "#ffffff" }).removeAlpha().raw().toBuffer();
+  const a = await fig.raw().toBuffer();
+  const diff = Buffer.alloc(fw * fh * 3);
+  let bad = 0;
+  for (let p = 0; p < fw * fh; p++) {
+    const i = p * 3;
+    const delta = Math.max(Math.abs(a[i] - crop[i]), Math.abs(a[i + 1] - crop[i + 1]), Math.abs(a[i + 2] - crop[i + 2]));
+    if (delta > pixelThreshold) {
+      bad++;
+      diff[i] = 255;
+    } else {
+      diff[i] = diff[i + 1] = diff[i + 2] = Math.round((crop[i] + 255 * 2) / 3);
+    }
+  }
+  const gap = 8;
+  await sharp({ create: { width: fw * 3 + gap * 2, height: fh, channels: 3, background: "#ffffff" } })
+    .composite([
+      { input: a, raw: { width: fw, height: fh, channels: 3 }, left: 0, top: 0 },
+      { input: crop, raw: { width: fw, height: fh, channels: 3 }, left: fw + gap, top: 0 },
+      { input: diff, raw: { width: fw, height: fh, channels: 3 }, left: (fw + gap) * 2, top: 0 },
+    ])
+    .png()
+    .toFile(outPng);
+  return { pct: (100 * bad) / (fw * fh), heightRatio: h / dom.h };
+}
 /* ---------- Figma: metadata and design context ---------- */
 
 /** get_metadata's flat tag format. Positions are relative to the parent. */
@@ -682,6 +762,8 @@ async function main() {
     console.log("note: sharp is not installed, screenshot diffs are skipped");
   }
 
+  const figma = useFigma && sharp ? await figmaClient() : null;
+  if (useFigma && sharp && !figma) console.log(`note: Figma desktop is not answering on ${FIGMA_MCP}; section screenshots from Figma are skipped (open the file in Figma desktop with Dev Mode MCP enabled)`);
   const chrome = await launchChrome();
   process.once("SIGINT", () => {
     chrome.close();
@@ -738,7 +820,28 @@ async function main() {
       const figmaPng = join(shots, `${page}-${bp}.png`);
       if (existsSync(figmaPng)) {
         if (sharp) await diffShots(sharp, figmaPng, webPng, join(shots, `${page}-${bp}-diff.png`), fSections, width, bp);
-      } else console.log(`  no Figma export at ${figmaPng}; to diff, export the frame there (Figma: select frame → Export → PNG, 1x)`);
+      } else if (!figma) console.log(`  no Figma export at ${figmaPng}; to diff, export the frame there (Figma: select frame → Export → PNG, 1x)`);
+
+      if (figma) {
+        const rows = [];
+        for (const f of fSections) {
+          const d = probe.sections[pairs[f.index]];
+          if (!d) {
+            rows.push([f.index + 1, cut(f.name, 24), "—", "no DOM section", ""]);
+            continue;
+          }
+          const shot = await figma.screenshot(f.id);
+          if (!shot.png) {
+            rows.push([f.index + 1, cut(f.name, 24), "—", cut(shot.error, 40), ""]);
+            continue;
+          }
+          const out = join(shots, `${page}-${bp}-${String(f.index + 1).padStart(2, "0")}-${f.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.png`);
+          const r = await sectionDiff(sharp, shot.png, webPng, d, out);
+          rows.push([f.index + 1, cut(f.name, 24), `${r.pct.toFixed(1)}%`, out, ""]);
+        }
+        console.log(`\nSECTION DIFF  (Figma screenshot of each section | web crop at the DOM section's own position | red where a channel differs by more than ${pixelThreshold}/255)`);
+        printTable(["#", "FIGMA", "MISMATCH", "IMAGE"], rows.map((r) => r.slice(0, 4)), "  ");
+      }
     }
     cdp.close();
   } finally {
