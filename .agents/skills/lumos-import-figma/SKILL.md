@@ -248,7 +248,13 @@ Figma style and a template default is reported and asked about, never applied.
    - **Assets.** Every `http://localhost:3845/assets/<hash>.<ext>` becomes a row
      with the node that uses it and a ready `curl -o src/assets/<page>/<name>.<ext>`
      line. The script makes no network request. Downscale photos, and rebuild
-     SVG icons with `fill="currentColor"`.
+     SVG icons with `fill="currentColor"`. Files are named by where they are
+     used (`guide-tag.svg`, `footer-iconbutton-4.svg`), the same use at another
+     breakpoint gets `-tablet` / `-mobile`. Never pick a file by the `imgXxx`
+     constant name: those are numbered per capture, so `imgIcon12` was the
+     LinkedIn logo on desktop and a document icon on tablet, and a guide card
+     shipped with a LinkedIn logo because of it. Match a node to its file by the
+     hash in the URL.
    - **Fixed or clipped nodes.** `overflow-hidden`, `text-ellipsis`,
      `line-clamp-*` and an explicit `h-[Npx]` on a frame that holds text are
      flagged. They explain mismatches that are not bugs; ask whether they are
@@ -487,6 +493,31 @@ Figma style and a template default is reported and asked about, never applied.
      `aspect-ratio`, `min-height: 0` and `overflow: hidden`, and the image
      `width: 100%; height: 100%; object-fit: cover`; otherwise the file's
      natural height stretches the box.
+   - **Icon buttons use the design's glyph, not the template's.** The template
+     ships its own marks (`src/assets/icons/arrow-full.svg` for
+     `Button variant="arrow"`, play, close). When the design has its own arrow
+     or play icon, replace that file's contents in the project with the Figma
+     glyph (`fill="currentColor"`), so every slider and tab arrow follows; do not
+     leave the template mark under a Figma-sized button.
+   - **A `theme-*` class paints a background.** `[class*="theme-"]` sets
+     `background-color: var(--background)`. On an overlay that only needs light
+     text over an image (a card caption with a gradient), add
+     `background-color: transparent`, or the overlay covers the image.
+   - **A Figma `max-w` that never binds stays out.** If an element's width is
+     below its `max-w-[Npx]` in every frame (a 392px card with `max-w-[400px]`),
+     the cap changed nothing in the design and only leaves empty space at widths
+     between the frames. Copy a max width only at the breakpoint where the frame
+     actually reaches it.
+   - **Underlines sit lower in Figma.** Figma's automatic underline offset is
+     further from the text than the browser's `auto`, and the capture does not
+     say how far. Set `text-underline-offset` on underlined links (0.2em matched
+     OneListed's Inter at 17px) and compare against a Figma screenshot.
+   - **Content that differs between frames: desktop wins, then ask.** When the
+     frames show different copy, images, item counts or icons for the same
+     element (a portrait only on tablet, a shorter heading on mobile), build the
+     desktop version at every breakpoint and put the difference in the
+     questions. Layout differences (stacking, sizes, columns) are not content and
+     follow each frame.
    - **After a bulk edit with `sed` or a script, Vite may serve stale component
      CSS.** `touch` the file, then reload.
 

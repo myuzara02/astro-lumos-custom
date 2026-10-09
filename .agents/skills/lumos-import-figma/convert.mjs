@@ -38,7 +38,7 @@ import { basename, join } from "node:path";
 
 /* Moves independently of the framework: a skill fix does not need a release,
    and a release does not invalidate the skill. */
-const SKILL_VERSION = "2.4.0";
+const SKILL_VERSION = "2.5.0";
 /* A pin, not a mirror: the release this skill was last checked against.
    Deriving it from package.json would make it always equal to the running
    version, and the mismatch note would never fire. */
@@ -1374,13 +1374,29 @@ function runDesignContext(files) {
   /* ---- assets ---- */
   const assets = new Map();
   const taken = new Set();
+  /* A constant like imgIcon12 is numbered per capture, so the same name is a different file in each one
+     (desktop imgIcon12 was a LinkedIn logo, tablet imgIcon12 a document icon). Files are named by where
+     they are used instead: the section, then the first ancestor whose name says what it is. */
+  const GENERIC = /^(icon|frame|vector|image|img|div|svg|group|text-container|content|actions|global-wrapper|section-container|.*-wrapper|.*-container|layer.*)$/i;
+  const usageName = (n) => {
+    const names = [n, ...ancestors(n)].map((a) => a.name).filter((x) => x && !/\s--\s|\[(desktop|tablet|mobile)\]/i.test(x));
+    const section = names.find((x) => /-section$/i.test(x))?.replace(/-section$/i, "");
+    const role = names.find((x) => !GENERIC.test(x) && !/-section$/i.test(x));
+    const roleSlug = role ? slug(role) : "";
+    return slug([section, section && roleSlug.startsWith(slug(section)) ? roleSlug.slice(slug(section).length) : roleSlug].filter(Boolean).join("-")) || (section ? slug(`${section}-background`) : "");
+  };
   for (const c of caps) {
     const consts = new Map([...c.text.matchAll(/const\s+(\w+)\s*=\s*"(http:\/\/localhost:3845\/assets\/([0-9a-f]+)\.(\w+))";/g)].map((m) => [m[1], { url: m[2], hash: m[3], ext: m[4] }]));
     for (const [constName, a] of consts) {
-      const entry = assets.get(a.hash) ?? { ...a, consts: new Set(), users: new Set(), files: new Set() };
+      const entry = assets.get(a.hash) ?? { ...a, consts: new Set(), users: new Set(), usage: new Set(), files: new Set() };
       entry.consts.add(constName);
       entry.files.add(c.label);
-      for (const n of c.nodes) if (n.attrs.src && new RegExp(`\\b${constName}\\b`).test(n.attrs.src)) entry.users.add(nameOf(n));
+      for (const n of c.nodes) {
+        if (!n.attrs.src || !new RegExp(`\\b${constName}\\b`).test(n.attrs.src)) continue;
+        entry.users.add(nameOf(n));
+        const u = usageName(n);
+        if (u) entry.usage.add(u);
+      }
       assets.set(a.hash, entry);
     }
   }
@@ -1389,8 +1405,9 @@ function runDesignContext(files) {
     console.log(`\nASSETS (${assets.size} distinct; the script makes no network request — run these while Figma desktop is open):`);
     const lines = [];
     for (const a of assets.values()) {
-      const base = slug([...a.consts][0].replace(/^img/, "")) || "asset";
-      const bp = [...a.files][0].match(/(desktop|tablet|mobile)$/i)?.[1].toLowerCase();
+      const base = [...a.usage][0] || slug([...a.consts][0].replace(/^img/, "")) || "asset";
+      /* The same use at another breakpoint gets -tablet / -mobile; a second asset in the same use gets -2, -3. */
+      const bp = [...a.files].every((f) => /tablet$/i.test(f)) ? "tablet" : [...a.files].every((f) => /mobile$/i.test(f)) ? "mobile" : null;
       let name = base;
       if (taken.has(name) && bp) name = `${base}-${bp}`;
       for (let i = 2; taken.has(name); i++) name = `${base}-${i}`;
