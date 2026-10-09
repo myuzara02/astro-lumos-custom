@@ -513,6 +513,36 @@ Figma style and a template default is reported and asked about, never applied.
    are; metadata cannot, because it shows a fixed-height frame and a
    content-sized one the same way.
 
+   **Measure with `verify.mjs`.** With the dev server running:
+
+   ```bash
+   npm run verify -- --url http://localhost:4321/ --page home
+   ```
+
+   It needs only Node and a local Chrome (`--chrome <path>` if it is not found).
+   For each breakpoint frame in `figma/<page>-metadata.xml` it loads the page at
+   that width and prints (1) every section's Figma y and height against the
+   DOM's, with the running drift, paired by the words the two share so a section
+   not built yet does not shift the rows below it; (2) every Figma text node
+   (words from the design-context capture, box from the metadata) against the DOM
+   element with the same words, listing each delta over `--tolerance` (default
+   1px), worst first; (3) a full-page screenshot at
+   `figma/shots/<page>-<bp>-web.png`. If the Figma frame is exported as
+   `figma/shots/<page>-<bp>.png` (Figma: select the frame, Export, PNG, 1x), it
+   also writes `<page>-<bp>-diff.png` (red where the pixels differ) and the
+   mismatch percentage per section.
+
+   Read the deltas as a list of causes, not as noise. A whole section shifted by
+   the same amount usually has one cause: a heading or paragraph margin the type
+   style adds (`.heading` and `.text` carry `margin-top`; reset it inside a
+   component whose spacing comes from the design), or a `Section` padding utility
+   overriding the component's own padding. Its limits: the text of a hero or
+   other node with no children in the metadata is not compared; a text that fills
+   its row in Figma has the row's width there and its own width in the DOM, so a
+   large width delta on one-line headings is expected and not a bug; and browser
+   text rendering never equals Figma's pixel for pixel, so compare layout, not
+   glyph edges.
+
 ## The report
 
 Close with these lists. Anything empty, say so.

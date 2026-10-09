@@ -12,9 +12,12 @@
  * width, loads the page, waits for `load` and `document.fonts.ready`, scrolls
  * through the page once so lazy images have a size, and then reports three things.
  *
- *   SECTIONS     The Figma page frame's direct children, in order, against the
- *                DOM's page sections, in order. Per section: y and height on both
- *                sides, the deltas, and the running total of height deltas.
+ *   SECTIONS     The Figma page frame's direct children against the DOM's page
+ *                sections. They are paired by the words they share (the navbar and
+ *                footer by their header/footer element), keeping page order, so a
+ *                section that is not built yet does not shift every row below it.
+ *                Per section: y and height on both sides, the deltas, and the
+ *                running total of height deltas over the paired sections.
  *
  *                The DOM sections are the in-flow, non-zero-height children of
  *                <body>, with these wrappers replaced by their own children: <main>,
