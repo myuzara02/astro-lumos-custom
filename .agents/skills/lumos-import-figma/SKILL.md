@@ -550,7 +550,13 @@ Figma style and a template default is reported and asked about, never applied.
    are; metadata cannot, because it shows a fixed-height frame and a
    content-sized one the same way.
 
-   **Measure with `verify.mjs`.** With the dev server running:
+   **Measure with `verify.mjs` — required on every slice.** A page is not done
+   until this has run after the last change, with Figma desktop open on the file
+   so the section screenshots and diffs are made, and until every section above
+   the noise level (about 5% on desktop; text edges always differ) has had its
+   diff image looked at and each red shape explained or fixed. Run it again
+   after each round of fixes; the numbers in the report come from the last run.
+   With the dev server running:
 
    ```bash
    npm run verify -- --url http://localhost:4321/ --page home
@@ -621,6 +627,12 @@ Close with these lists. Anything empty, say so.
 - **Fixed or clipped nodes** — each one the user ruled on, and each mismatch it
   explains.
 - **Still open** — inconsistencies the user has not ruled on yet.
+- **Verify** — the last `npm run verify` run: per breakpoint, every section's
+  height delta and section-diff percentage, which diff images were reviewed,
+  and what each remaining red shape is (fixed, design question, or rendering
+  noise). Where content differs from the tablet or mobile frame on purpose
+  (desktop content wins), say that those heights and diffs are expected to
+  differ.
 
 ## Checklist before editing base.css
 
@@ -634,6 +646,12 @@ Close with these lists. Anything empty, say so.
 - [ ] Fixed-height and clipped nodes asked about: intentional, or should the page let them grow.
 - [ ] Fonts checked: the family and every weight are configured.
 - [ ] The consolidated `ASK BEFORE WRITING` list was put to the user and answered.
+
+## Checklist before calling the page done
+
+- [ ] `npm run verify` ran after the last change, with Figma desktop open (section diffs made).
+- [ ] Every section diff above the noise level was opened and each red shape is fixed or listed.
+- [ ] Section heights match the metadata, or the difference is explained (desktop content on a stale frame, a design question).
 
 ## Versions
 

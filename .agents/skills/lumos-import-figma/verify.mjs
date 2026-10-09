@@ -841,6 +841,9 @@ async function main() {
         }
         console.log(`\nSECTION DIFF  (Figma screenshot of each section | web crop at the DOM section's own position | red where a channel differs by more than ${pixelThreshold}/255)`);
         printTable(["#", "FIGMA", "MISMATCH", "IMAGE"], rows.map((r) => r.slice(0, 4)), "  ");
+        if (rows.length && rows.every((r) => /no node could be found/i.test(String(r[3])))) {
+          console.log("  Figma desktop answered but has another file in front: bring the design's tab to the front in Figma desktop and run again.");
+        }
       }
     }
     cdp.close();
