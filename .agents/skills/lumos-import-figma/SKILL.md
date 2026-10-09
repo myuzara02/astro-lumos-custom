@@ -479,8 +479,14 @@ Figma style and a template default is reported and asked about, never applied.
      add the border to the size. Use `--button-border-inset`, or subtract the
      border from the padding, so the box ends up the size the frame says.
    - **Do not name a component variant like an existing class.** A Button
-     variant called `icon` collided with the Icon component's `.icon`. Grep for
-     `.<variant>` before choosing the name.
+     variant called `icon` collided with the Icon component's `.icon`, and a
+     header variant called `text` collided with Lumos's `.text` (which adds
+     `margin-top`). Grep `src/styles` and `src/components` for `.<variant>`
+     before choosing the name, and prefer a prefixed one such as `rule-text`.
+   - **An image must not set its box's height.** Give the wrapper
+     `aspect-ratio`, `min-height: 0` and `overflow: hidden`, and the image
+     `width: 100%; height: 100%; object-fit: cover`; otherwise the file's
+     natural height stretches the box.
    - **After a bulk edit with `sed` or a script, Vite may serve stale component
      CSS.** `touch` the file, then reload.
 
