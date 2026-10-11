@@ -653,6 +653,27 @@ Close with these lists. Anything empty, say so.
 - [ ] `npm run verify` ran after the last change, with Figma desktop open (section diffs made).
 - [ ] Every section diff above the noise level was opened and each red shape is fixed or listed.
 - [ ] Section heights match the metadata, or the difference is explained (desktop content on a stale frame, a design question).
+- [ ] Anything the tool missed or got wrong was logged in `.feedback/`, or there was nothing to log.
+
+## Feedback for the tool
+
+This skill is improved from real projects. Whenever, in a project, you fix
+something that `convert.mjs` or `verify.mjs` did not flag, or work around a
+rule of this skill that was wrong, missing or misleading, write one entry in
+`.feedback/` at the project root, at the moment you fix it, while the details
+are fresh. One file per finding, named `<YYYY-MM-DD>-<short-slug>.md`, copied
+from `feedback-template.md` in this folder.
+
+Log only what the tool could have handled: a wrong or missing report line, a
+rule the agent had to learn by being corrected, something `verify` did not
+show, an asset or token the script named badly. Do not log design decisions
+that belong to one client (a heading that differs on purpose), or one-off
+tweaks.
+
+Each entry says who found it: `verify` or the person reviewing. That count is
+how the tool's progress is measured. `.feedback/` is git-ignored by the
+template, so client designs and screenshots stay out of git; the maintainer
+reads the folder in place when improving the skill.
 
 ## Versions
 

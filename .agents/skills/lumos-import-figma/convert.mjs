@@ -38,7 +38,7 @@ import { basename, join } from "node:path";
 
 /* Moves independently of the framework: a skill fix does not need a release,
    and a release does not invalidate the skill. */
-const SKILL_VERSION = "2.5.0";
+const SKILL_VERSION = "2.6.0";
 /* A pin, not a mirror: the release this skill was last checked against.
    Deriving it from package.json would make it always equal to the running
    version, and the mismatch note would never fire. */

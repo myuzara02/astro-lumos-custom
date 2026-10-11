@@ -10,6 +10,9 @@ node_modules/
 # identities for scripts/push-both.sh
 .push-both.env
 
+# findings for improving the Figma skill (may hold client designs)
+.feedback/
+
 # logs
 npm-debug.log*
 yarn-debug.log*
