@@ -7,6 +7,9 @@ dist/
 # dependencies
 node_modules/
 
+# identities for scripts/push-both.sh
+.push-both.env
+
 # logs
 npm-debug.log*
 yarn-debug.log*

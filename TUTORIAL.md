@@ -138,7 +138,21 @@ Figma's "Inter Display" is Inter at optical size 32. The template loads it from 
 
 ## Updating an older project
 
-A project made from the template is a copy, so later template changes do not arrive on their own. To bring in the newest tooling, copy `.agents/skills/lumos-import-figma`, the `slice` script in `package.json`, and the rule in `AGENTS.md` from the template.
+A project made from the template is a copy, so later template changes do not arrive on their own. To bring in the newest tooling, replace `.agents/skills/lumos-import-figma` as a whole, and copy the `slice` and `verify` scripts in `package.json` and the rule in `AGENTS.md` from the template.
+
+Replace the folder, do not copy over it, or a file the template deleted or renamed stays behind. From a project that has the template as a remote named `template`:
+
+```bash
+git fetch template
+git rm -r --quiet .agents/skills/lumos-import-figma
+git restore --source=template/main --worktree --staged -- .agents/skills/lumos-import-figma
+```
+
+Never change the tool inside a project. Fix it in the template, test it on a sample design, then pull it into the project.
+
+## Maintaining the template with two remotes
+
+If the template lives on two remotes whose histories differ on purpose (a personal repo and an organisation repo that must show only the organisation account), a plain `git push` to the second one is rejected and `--force` would wipe its history. Use `scripts/push-both.sh` instead: it pushes `main` as it is to the first remote, re-authors the new commits on top of the second remote's history, pushes them as a normal fast-forward, and restores your active `gh` account. Run `scripts/push-both.sh --dry-run` first to see what it would do. It needs a `.push-both.env` (git-ignored) with the remote names, the `gh` logins and the author identity for the second remote; the variables are listed at the top of the script.
 
 ## Troubleshooting
 
