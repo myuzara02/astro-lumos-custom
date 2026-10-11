@@ -510,8 +510,9 @@ Figma style and a template default is reported and asked about, never applied.
      actually reaches it.
    - **Underlines sit lower in Figma.** Figma's automatic underline offset is
      further from the text than the browser's `auto`, and the capture does not
-     say how far. Set `text-underline-offset` on underlined links (0.2em matched
-     OneListed's Inter at 17px) and compare against a Figma screenshot.
+     say how far. Set `text-underline-offset` on underlined links, start at
+     0.2em (it matched Inter at 17px in the first case study; it is a starting
+     point, not a constant) and compare against a Figma screenshot.
    - **Content that differs between frames: desktop wins, then ask.** When the
      frames show different copy, images, item counts or icons for the same
      element (a portrait only on tablet, a shorter heading on mobile), build the
