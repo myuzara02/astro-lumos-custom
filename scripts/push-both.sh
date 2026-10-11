@@ -47,8 +47,13 @@ trap cleanup EXIT
 
 as() { [ "$(gh api user --jq .login)" = "$1" ] || gh auth switch -u "$1" >/dev/null; }
 
-git fetch -q "$FIRST_REMOTE"
-git fetch -q "$SECOND_REMOTE"
+fetch_both() {
+  as "$FIRST_GH_USER"
+  git fetch -q "$FIRST_REMOTE"
+  as "$SECOND_GH_USER"
+  git fetch -q "$SECOND_REMOTE"
+}
+fetch_both
 MAIN_TREE="$(git rev-parse 'main^{tree}')"
 
 # --- first remote: must be a plain fast-forward ---------------------------------
@@ -94,6 +99,5 @@ if [ "$FIRST_NEW" -gt 0 ]; then
   git push "$FIRST_REMOTE" main
 fi
 
-git fetch -q "$FIRST_REMOTE"
-git fetch -q "$SECOND_REMOTE"
+fetch_both
 say "done. $FIRST_REMOTE/main $(git rev-parse --short "$FIRST_REMOTE/main")  $SECOND_REMOTE/main $(git rev-parse --short "$SECOND_REMOTE/main")  (same content: $([ "$(git rev-parse "$FIRST_REMOTE/main^{tree}")" = "$(git rev-parse "$SECOND_REMOTE/main^{tree}")" ] && echo yes || echo NO))"
