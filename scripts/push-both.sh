@@ -33,7 +33,7 @@ die() { echo "push-both: $*" >&2; exit 1; }
 say() { echo "push-both: $*"; }
 
 [ "$(git branch --show-current)" = "main" ] || die "run it on main (now on $(git branch --show-current))"
-[ -z "$(git status --porcelain)" ] || die "working tree is not clean; commit or stash first"
+[ -z "$(git status --porcelain --untracked-files=no)" ] || die "tracked files have uncommitted changes; commit or stash first (untracked files are fine)"
 command -v gh >/dev/null || die "gh (GitHub CLI) is required to switch accounts"
 
 START_USER="$(gh api user --jq .login 2>/dev/null || true)"
