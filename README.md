@@ -1,68 +1,91 @@
-<p align="center">
-  <img src=".github/assets/banner.png" alt="Lumos For Astro" width="720">
-</p>
+# astro-lumos-custom
 
-<p align="center">
-  <a href="https://www.npmjs.com/package/create-lumos"><img alt="npm version" src="https://img.shields.io/npm/v/create-lumos?labelColor=1E1E1E&color=C6FB50"></a>
-  <a href="LICENSE"><img alt="license" src="https://img.shields.io/npm/l/create-lumos?labelColor=1E1E1E&color=C6FB50"></a>
-  <a href="https://github.com/lumosframework/lumos-for-astro/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/lumosframework/lumos-for-astro/actions/workflows/ci.yml/badge.svg"></a>
-</p>
+A template for turning Figma designs into Astro pages that match the design
+1:1. It is [Lumos for Astro](https://lumosframework.com) with two changes:
 
-A component and styling framework for building Astro sites, designed around
-efficiency, scalability and accessibility.
+- **Fixed values per breakpoint.** Tokens in `src/styles/base.css` are explicit
+  px values for mobile (up to 767px), tablet (768–991px) and desktop (992px and
+  up), taken from Figma, instead of fluid `clamp()` scaling.
+- **A Figma slicing skill, `lumos-import-figma`.** It reads a Figma file,
+  compares it with the project's tokens, asks about everything that is
+  ambiguous, and measures the built page against the design.
 
-Documentation lives at **[lumosframework.com](https://lumosframework.com)**.
+The tool is meant for developers building a project from a design. An AI coding
+agent does the measuring; you provide the design data and answer its questions.
 
-> **This is a customised template (`astro-lumos-custom`).** Tokens in `src/styles/base.css` are explicit per-breakpoint values (mobile < 768px, tablet 768–991px, desktop ≥ 992px) sliced from a Figma file, not fluid `clamp()`. The palette and layout values belong to that original design; replace them with the `lumos-import-figma` skill for a new project.
+> The palette and layout values in `base.css` belong to the design this template
+> was first tested on. The skill replaces them for a new project.
 
-> **Beta.** Every `0.x` release is allowed to break things, and the component
-> props and their placements are the parts still moving — the tokens, layers and
-> CSS are not. `v1.0.0` is where the API gets committed to; breaking it after
-> that would take a `v2.0.0`.
->
-> Starting a site before then does not strand it. `create-lumos` stamps the
-> commit your site came from, and `/lumos-upgrade-version` three-way merges each
-> release into your own changes and pixel-diffs every page, so an upgrade is a
-> reviewed diff rather than a rewrite. The badge above carries the current
-> release.
+## What is in it
 
-## Getting started
+| Path | What it is |
+| --- | --- |
+| `.agents/skills/lumos-import-figma/` | The skill: `SKILL.md` (the workflow), `convert.mjs` (reads the Figma data), `verify.mjs` (measures the page), `fixtures/` |
+| `figma/` | Drop folder for variable exports, `get_metadata` XML and `get_design_context` captures. Git-ignored except its README |
+| `scripts/push-both.sh` | Maintainer script for pushing the template to two remotes |
+| `TUTORIAL.md` | Step-by-step guide: setup, a new design, updating a project |
+| `LUMOS.md` | How to build pages and components in this project |
+| `AGENTS.md` | The instruction file agents read first |
 
-```sh
-npm create lumos@latest my-site
-```
+The other `lumos-*` skills (`audit-props`, `import-webflow`, `scaling-graphic`,
+`upgrade-version`) come from Lumos for Astro.
 
-That scaffolds a new site from this repository and installs its dependencies
-with whichever package manager you ran it with. Then:
+## Quick start
 
 ```sh
-cd my-site
+git clone https://github.com/<account>/astro-lumos-custom.git my-project
+cd my-project
+npm install
 npm run dev
 ```
 
-| Script            | What it does                      |
-| ----------------- | --------------------------------- |
-| `npm run dev`     | Starts the dev server             |
-| `npm run build`   | Builds the site to `dist/`        |
-| `npm run preview` | Serves the built site             |
-| `npm run check`   | Type-checks every `.astro` file   |
-| `npm run format`  | Formats the project with Prettier |
+Then start a fresh git history for the project and create its own repository
+(see **Create your project** in [TUTORIAL.md](TUTORIAL.md)), so it does not push
+back to the template.
 
 Node 22.12 or newer is required.
 
-## Documentation
+## Using the tool on a design
 
-Component reference, styling guides and examples are at
-[lumosframework.com](https://lumosframework.com).
+1. Export the Figma variables to `figma/` (`Responsive.json`, `Static.json`).
+2. Open the file in Figma desktop with Dev Mode and its MCP server on, and give
+   your agent a node link.
+3. The agent saves the node data into `figma/` and runs
+   `npm run slice -- --folder figma`. Answer its list of questions; nothing in
+   `src/` changes before that.
+4. After building, run `npm run verify -- --url http://localhost:4321/ --page <name>`.
+   It measures every section and text box against the Figma metadata and, with
+   Figma desktop open, writes a side-by-side diff image per section.
 
-## Contributing
+Full steps are in [TUTORIAL.md](TUTORIAL.md); the rules the agent follows are in
+[`SKILL.md`](.agents/skills/lumos-import-figma/SKILL.md).
 
-Read
-[CONTRIBUTING.md](https://github.com/lumosframework/lumos-for-astro/blob/main/CONTRIBUTING.md)
-first — a pull request needs the
-[CLA](https://github.com/lumosframework/lumos-for-astro/blob/main/CLA.md)
-signed before it can be merged.
+## Scripts
 
-## License
+| Script | What it does |
+| --- | --- |
+| `npm run dev` | Starts the dev server |
+| `npm run build` | Builds the site to `dist/` |
+| `npm run preview` | Serves the built site |
+| `npm run check` | Type-checks every `.astro` file |
+| `npm run format` | Formats the project with Prettier |
+| `npm run slice` | Reads Figma data and reports tokens, text styles, buttons, assets and questions |
+| `npm run verify` | Measures a built page against Figma and writes section diffs |
 
-[MIT](LICENSE)
+## Improving the tool
+
+Fix the tool here, never inside a project. When a project shows something the
+tool missed or got wrong, the agent logs it in the project's `.feedback/` folder
+(git-ignored), using `.agents/skills/lumos-import-figma/feedback-template.md`.
+Those entries are read here, sorted into tool problems and design decisions, and
+the tool problems are fixed and tested before the project pulls the new version.
+
+## Updating a project
+
+Replace the skill folder as a whole so deleted or renamed files do not linger.
+The commands are in [TUTORIAL.md](TUTORIAL.md#updating-an-older-project).
+
+## License and credit
+
+[MIT](LICENSE). Lumos for Astro is by Timothy Ricks; this template builds on it
+and keeps its license.
